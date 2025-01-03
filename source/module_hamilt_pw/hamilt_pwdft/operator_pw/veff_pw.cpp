@@ -12,6 +12,9 @@ Veff<OperatorPW<T, Device>>::Veff(const int* isk_in,
                                        const int veff_col,
                                        const ModulePW::PW_Basis_K* wfcpw_in)
 {
+    if (isk_in == nullptr || wfcpw_in == nullptr) {
+        ModuleBase::WARNING_QUIT("VeffPW", "Constuctor of Operator::VeffPW is failed, please check your code!");
+    }
     this->classname = "Veff";
     this->cal_type = calculation_type::pw_veff;
     this->isk = isk_in;
@@ -22,9 +25,7 @@ Veff<OperatorPW<T, Device>>::Veff(const int* isk_in,
     this->wfcpw = wfcpw_in;
     resmem_complex_op()(this->ctx, this->porter, this->wfcpw->nmaxgr, "Veff<PW>::porter");
     resmem_complex_op()(this->ctx, this->porter1, this->wfcpw->nmaxgr, "Veff<PW>::porter1");
-    if (this->isk == nullptr || this->wfcpw == nullptr) {
-        ModuleBase::WARNING_QUIT("VeffPW", "Constuctor of Operator::VeffPW is failed, please check your code!");
-    }
+
 }
 
 template<typename T, typename Device>
@@ -41,9 +42,14 @@ void Veff<OperatorPW<T, Device>>::act(
     const int npol,
     const T* tmpsi_in,
     T* tmhpsi,
-    const int ngk_ik)const
+    const int ngk_ik,
+    const bool is_first_node)const
 {
     ModuleBase::timer::tick("Operator", "VeffPW");
+    if(is_first_node)
+    {
+        setmem_complex_op()(this->ctx, tmhpsi, 0, nbasis*nbands/npol);
+    }
 
     int max_npw = nbasis / npol;
     const int current_spin = this->isk[this->ik];

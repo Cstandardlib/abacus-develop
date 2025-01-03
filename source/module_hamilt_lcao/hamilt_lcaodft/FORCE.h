@@ -51,6 +51,7 @@ class Force_LCAO
                 const bool isstress,
                 ForceStressArrays& fsr, // mohan add 2024-06-16
                 const UnitCell& ucell,
+                const Grid_Driver& gd,
                 const psi::Psi<T>* psi,
                 const elecstate::ElecState* pelec,
                 ModuleBase::matrix& foverlap,
@@ -62,6 +63,7 @@ class Force_LCAO
                 ModuleBase::matrix& svnl_dbeta,
                 ModuleBase::matrix& svl_dphi,
 #ifdef __DEEPKS
+                ModuleBase::matrix& fvnl_dalpha,
                 ModuleBase::matrix& svnl_dalpha,
 #endif
                 typename TGint<T>::type& gint,
@@ -72,7 +74,9 @@ class Force_LCAO
                 Record_adj* ra = nullptr);
 
     // get the ds, dt, dvnl.
-    void allocate(const Parallel_Orbitals& pv,
+    void allocate(const UnitCell& ucell,
+                  const Grid_Driver& gd,
+                  const Parallel_Orbitals& pv,
                   ForceStressArrays& fsr, // mohan add 2024-06-15
                   const TwoCenterBundle& two_center_bundle,
                   const LCAO_Orbitals& orb,
@@ -115,17 +119,6 @@ class Force_LCAO
                         ModuleBase::matrix& ftvnl_dphi,
                         ModuleBase::matrix& stvnl_dphi,
                         Record_adj* ra = nullptr);
-
-    void cal_fvnl_dbeta(const elecstate::DensityMatrix<T, double>* dm,
-                        const Parallel_Orbitals& pv,
-                        const UnitCell& ucell,
-                        const LCAO_Orbitals& orb,
-                        const TwoCenterIntegrator& intor_orb_beta,
-                        Grid_Driver& gd,
-                        const bool isforce,
-                        const bool isstress,
-                        ModuleBase::matrix& fvnl_dbeta,
-                        ModuleBase::matrix& svnl_dbeta);
 
     //-------------------------------------------
     // forces related to local pseudopotentials

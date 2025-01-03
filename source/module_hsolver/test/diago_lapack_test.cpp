@@ -1,8 +1,8 @@
 // Author: Zhang Xiaoyang
 // A modified version of diago_lcao_test.cpp
-#define private public
+// #define private public
 #include "module_parameter/parameter.h"
-#undef private
+// #undef private
 // Remove some useless functions and dependencies. Serialized the full code
 // and refactored some function.
 
@@ -127,7 +127,6 @@ class DiagoLapackPrepare
     std::vector<T> h;
     std::vector<T> s;
     HamiltTEST<T> hmtest;
-    // hsolver::DiagH<T>* dh = nullptr;
     psi::Psi<T> psi;
     std::vector<double> e_solver;
     std::vector<double> e_lapack;
@@ -188,8 +187,10 @@ class DiagoLapackPrepare
 
     void set_env()
     {
-        PARAM.sys.nlocal = nlocal;
-        PARAM.input.nbands = nbands;
+        // PARAM.sys.nlocal = nlocal;
+        PARAM.set_sys_nlocal(nlocal);
+        // PARAM.input.nbands = nbands;
+        PARAM.set_input_nbands(nbands);
     }
 
     void diago()

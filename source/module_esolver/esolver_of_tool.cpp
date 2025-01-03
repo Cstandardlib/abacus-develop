@@ -5,6 +5,7 @@
 #include "module_elecstate/potentials/gatefield.h"
 #include "module_hamilt_pw/hamilt_pwdft/global.h"
 #include "module_parameter/parameter.h"
+#include "module_elecstate/cal_ux.h"
 
 namespace ModuleESolver
 {
@@ -27,8 +28,9 @@ void ESolver_OF::init_elecstate(UnitCell& ucell)
     this->pelec->pot = new elecstate::Potential(this->pw_rhod,
                                                 this->pw_rho,
                                                 &ucell,
-                                                &(GlobalC::ppcell.vloc),
+                                                &(this->locpp.vloc),
                                                 &(this->sf),
+                                                &(this->solvent),
                                                 &(this->pelec->f_en.etxc),
                                                 &(this->pelec->f_en.vtxc));
     // There is no Operator in ESolver_OF, register Potentials here!
@@ -110,7 +112,7 @@ void ESolver_OF::allocate_array()
  * @param [in] ptemp_phi phi
  * @param [out] rdLdphi dL/dphi
  */
-void ESolver_OF::cal_potential(double* ptemp_phi, double* rdLdphi)
+void ESolver_OF::cal_potential(double* ptemp_phi, double* rdLdphi, UnitCell& ucell)
 {
     double** dEdtemp_phi = new double*[PARAM.inp.nspin];
     double** temp_phi = new double*[PARAM.inp.nspin];
@@ -132,11 +134,8 @@ void ESolver_OF::cal_potential(double* ptemp_phi, double* rdLdphi)
         }
     }
 
-    if (PARAM.inp.nspin == 4) 
-    {
-        GlobalC::ucell.cal_ux();
-    }
-    this->pelec->pot->update_from_charge(this->ptemp_rho_, &GlobalC::ucell);
+    elecstate::cal_ux(ucell);
+    this->pelec->pot->update_from_charge(this->ptemp_rho_, &ucell);
     ModuleBase::matrix& vr_eff = this->pelec->pot->get_effective_v();
 
     this->kinetic_potential(this->ptemp_rho_->rho, temp_phi, vr_eff);
@@ -172,9 +171,7 @@ void ESolver_OF::cal_dEdtheta(double** ptemp_phi, Charge* temp_rho, UnitCell& uc
 {
     double* dphi_dtheta = new double[this->pw_rho->nrxx];
 
-    if (PARAM.inp.nspin == 4) {
-        ucell.cal_ux();
-}
+    elecstate::cal_ux(ucell);
     this->pelec->pot->update_from_charge(temp_rho, &ucell);
     ModuleBase::matrix& vr_eff = this->pelec->pot->get_effective_v();
 

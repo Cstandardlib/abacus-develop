@@ -1,5 +1,7 @@
 #pragma once
 #include "module_elecstate/module_dm/density_matrix.h"
+#include <numeric>
+#include  "module_base/parallel_reduce.h"
 namespace LR_Util
 {
     template<typename TR>
@@ -44,4 +46,75 @@ namespace LR_Util
         hamilt::HContainer<std::complex<double>>& HR,
         const int& nat,
         const char& type = 'R');
+
+    template <typename T, typename TR>
+    void initialize_HR(hamilt::HContainer<TR>& hR,
+                       const UnitCell& ucell,
+                       const Grid_Driver& gd,
+                       const std::vector<double>& orb_cutoff)
+    {
+        const auto& pmat = *hR.get_paraV();
+        for (int iat1 = 0; iat1 < ucell.nat; iat1++)
+        {
+            auto tau1 = ucell.get_tau(iat1);
+            int T1, I1;
+            ucell.iat2iait(iat1, &I1, &T1);
+            AdjacentAtomInfo adjs;
+            gd.Find_atom(ucell, tau1, T1, I1, &adjs);
+            for (int ad = 0; ad < adjs.adj_num + 1; ++ad)
+            {
+                const int T2 = adjs.ntype[ad];
+                const int I2 = adjs.natom[ad];
+                int iat2 = ucell.itia2iat(T2, I2);
+                if (pmat.get_row_size(iat1) <= 0 || pmat.get_col_size(iat2) <= 0) { continue; }
+                const ModuleBase::Vector3<int>& R_index = adjs.box[ad];
+                if (ucell.cal_dtau(iat1, iat2, R_index).norm() * ucell.lat0 >= orb_cutoff[T1] + orb_cutoff[T2]) { continue; }
+                hamilt::AtomPair<TR> tmp(iat1, iat2, R_index.x, R_index.y, R_index.z, &pmat);
+                hR.insert_pair(tmp);
+            }
+        }
+        hR.allocate(nullptr, true);
+        // hR.set_paraV(&pmat);
+        if (std::is_same<T, double>::value) { hR.fix_gamma(); }
+    }
+    template <typename T, typename TR>
+    void initialize_DMR(elecstate::DensityMatrix<T, TR>& dm,
+                        const Parallel_Orbitals& pmat,
+                        const UnitCell& ucell,
+                        const Grid_Driver& gd,
+                        const std::vector<double>& orb_cutoff)
+    {
+        hamilt::HContainer<TR> hR_tmp(&pmat);
+        initialize_HR<T, TR>(hR_tmp, ucell, gd, orb_cutoff);
+        dm.init_DMR(hR_tmp);
+    }
+
+    /// $\sum_{uvR} H1_{uv}(R) H2_{uv}(R)$
+    template<typename TR1, typename TR2>
+    TR1 dot_R_matrix(const hamilt::HContainer<TR1>& h1, const hamilt::HContainer<TR2>& h2, const int& nat)
+    {
+        const auto& pmat = *h1.get_paraV();
+        TR1 sum = 0;
+        // in case of the different order of atom pair and R-index in h1 and h2, we search by value instead of index
+        for (int iat1 = 0;iat1 < nat;++iat1)
+        {
+            for (int iat2 = 0;iat2 < nat;++iat2)
+            {
+                auto ap1 = h1.find_pair(iat1, iat2);
+                if (!ap1) { continue; }
+                auto ap2 = h2.find_pair(iat1, iat2);
+                assert(ap2);
+                for (int iR = 0;iR < ap1->get_R_size();++iR)
+                {
+                    const ModuleBase::Vector3<int>& R = ap1->get_R_index(iR);
+                    auto mat1 = ap1->get_HR_values(R.x, R.y, R.z);
+                    auto mat2 = ap2->get_HR_values(R.x, R.y, R.z);
+                    sum += std::inner_product(mat1.get_pointer(), mat1.get_pointer() + mat1.get_memory_size(), mat2.get_pointer(), (TR1)0.0);
+                }
+            }
+        }
+        Parallel_Reduce::reduce_all(sum);
+        return sum;
+    }
+
 }

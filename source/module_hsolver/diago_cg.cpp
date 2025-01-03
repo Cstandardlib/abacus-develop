@@ -8,6 +8,8 @@
 #include <module_base/memory.h>
 #include <module_base/parallel_reduce.h>
 #include <module_base/timer.h>
+#include <module_base/tool_title.h>             // ModuleBase::TITLE
+#include <module_base/global_function.h>        // ModuleBase::GlobalFunc::NOTE
 #include <module_hsolver/diago_cg.h>
 
 using namespace hsolver;
@@ -52,7 +54,10 @@ DiagoCG<T, Device>::~DiagoCG()
 }
 
 template <typename T, typename Device>
-void DiagoCG<T, Device>::diag_mock(const ct::Tensor& prec_in, ct::Tensor& psi, ct::Tensor& eigen)
+void DiagoCG<T, Device>::diag_mock(const ct::Tensor& prec_in,
+                                   ct::Tensor& psi,
+                                   ct::Tensor& eigen,
+                                   const std::vector<double>& ethr_band)
 {
     ModuleBase::TITLE("DiagoCG", "diag_once");
     ModuleBase::timer::tick("DiagoCG", "diag_once");
@@ -151,6 +156,7 @@ void DiagoCG<T, Device>::diag_mock(const ct::Tensor& prec_in, ct::Tensor& psi, c
             converged = this->update_psi(pphi,
                                          cg,
                                          scg, // const Tensor&
+                                         ethr_band[m],
                                          cg_norm,
                                          theta,
                                          eigen_pack[m], // Real&
@@ -390,6 +396,7 @@ template <typename T, typename Device>
 bool DiagoCG<T, Device>::update_psi(const ct::Tensor& pphi,
                                     const ct::Tensor& cg,
                                     const ct::Tensor& scg,
+                                    const double& ethreshold,
                                     Real& cg_norm,
                                     Real& theta,
                                     Real& eigen,
@@ -439,7 +446,7 @@ bool DiagoCG<T, Device>::update_psi(const ct::Tensor& pphi,
                                                            cg.data<T>(),
                                                            sint_norm);
 
-    if (std::abs(eigen - e0) < pw_diag_thr_)
+    if (std::abs(eigen - e0) < ethreshold)
     {
         // ModuleBase::timer::tick("DiagoCG","update");
         return true;
@@ -580,6 +587,7 @@ void DiagoCG<T, Device>::diag(const Func& hpsi_func,
                               const Func& spsi_func,
                               ct::Tensor& psi,
                               ct::Tensor& eigen,
+                              const std::vector<double>& ethr_band,
                               const ct::Tensor& prec)
 {
     /// record the times of trying iterative diagonalization
@@ -601,7 +609,7 @@ void DiagoCG<T, Device>::diag(const Func& hpsi_func,
 
         ++ntry;
         avg_iter_ += 1.0;
-        this->diag_mock(prec, psi_temp, eigen);
+        this->diag_mock(prec, psi_temp, eigen, ethr_band);
     } while (this->test_exit_cond(ntry, this->notconv_));
 
     if (this->notconv_ > std::max(5, this->n_band_ / 4))

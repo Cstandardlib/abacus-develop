@@ -21,11 +21,6 @@ namespace ModuleSymmetry
         //--------------------------------------------------------------------------------
         // getters
         const std::map<Tap, std::set<TC>>& get_irreducible_sector()const { return this->irs_.get_irreducible_sector(); }
-        void find_irreducible_sector(const Symmetry& symm, const Atom* atoms, const Statistics& st,
-            const std::vector<TC>& Rs, const TC& period, const Lattice& lat)
-        {
-            this->irs_.find_irreducible_sector(symm, atoms, st, Rs, period, lat);
-        }
         TCdouble get_return_lattice(const Symmetry& symm,
             const ModuleBase::Matrix3& gmatd, const TCdouble gtransd,
             const TCdouble& posd_a1, const TCdouble& posd_a2)const
@@ -34,6 +29,11 @@ namespace ModuleSymmetry
         }
         //--------------------------------------------------------------------------------
         // setters
+        void find_irreducible_sector(const Symmetry& symm, const Atom* atoms, const Statistics& st,
+            const std::vector<TC>& Rs, const TC& period, const Lattice& lat)
+        {
+            this->irs_.find_irreducible_sector(symm, atoms, st, Rs, period, lat);
+        }
         void set_Cs_rotation(const std::vector<std::vector<int>>& abfs_l_nchi);
         //--------------------------------------------------------------------------------
         /// functions  to contruct rotation matrix in AO-representation
@@ -114,7 +114,9 @@ namespace ModuleSymmetry
     private:
         //--------------------------------------------------------------------------------
         std::vector<TC> get_Rs_from_BvK(const K_Vectors& kv)const;
-        std::vector<TC> get_Rs_from_adjacent_list(const UnitCell& ucell, Grid_Driver& gd, const Parallel_Orbitals& pv)const;
+        std::vector<TC> get_Rs_from_adjacent_list(const UnitCell& ucell,
+                                                  const Grid_Driver& gd,
+                                                  const Parallel_Orbitals& pv) const;
         //--------------------------------------------------------------------------------
 
         /// The sub functions to rotate matrices

@@ -50,17 +50,25 @@ void Output_HContainer<T>::write(int rx_in, int ry_in, int rz_in)
     }
     if (find_R == 0)
     {
-        ModuleBase::WARNING_QUIT("Output_HContainer::write", "Cannot find the R vector from the HContaine");
+        ModuleBase::WARNING_QUIT("Output_HContainer::write", "Cannot find the R vector from the HContainer.");
     }
 }
 
 template <typename T>
 void Output_HContainer<T>::write_single_R(int rx, int ry, int rz)
 {
+    if (this->_hcontainer->get_paraV() == nullptr)
+    {
+        ModuleBase::WARNING_QUIT("Output_HContainer::write_single_R", "paraV is nullptr! Unable to write the matrix.");
+    }
     this->_hcontainer->fix_R(rx, ry, rz);
+
     ModuleIO::SparseMatrix<T> sparse_matrix
         = ModuleIO::SparseMatrix<T>(_hcontainer->get_nbasis(), _hcontainer->get_nbasis());
+    assert(_hcontainer->get_nbasis()>0);
+
     sparse_matrix.setSparseThreshold(this->_sparse_threshold);
+
     for (int iap = 0; iap < this->_hcontainer->size_atom_pairs(); ++iap)
     {
         auto atom_pair = this->_hcontainer->get_atom_pair(iap);
@@ -77,6 +85,7 @@ void Output_HContainer<T>::write_single_R(int rx, int ry, int rz)
             }
         }
     }
+
     if (sparse_matrix.getNNZ() != 0)
     {
         _ofs << rx << " " << ry << " " << rz << " " << sparse_matrix.getNNZ() << std::endl;

@@ -28,10 +28,12 @@ class OperatorEXX<OperatorLCAO<TK, TR>> : public OperatorLCAO<TK, TR>
 public:
     OperatorEXX<OperatorLCAO<TK, TR>>(HS_Matrix_K<TK>* hsk_in,
         hamilt::HContainer<TR>* hR_in,
+        const UnitCell& ucell,
         const K_Vectors& kv_in,
         std::vector<std::map<int, std::map<TAC, RI::Tensor<double>>>>* Hexxd_in = nullptr,
         std::vector<std::map<int, std::map<TAC, RI::Tensor<std::complex<double>>>>>* Hexxc_in = nullptr,
         Add_Hexx_Type add_hexx_type_in = Add_Hexx_Type::R,
+        const int istep_in = 0,
         int* two_level_step_in = nullptr,
         const bool restart_in = false);
 
@@ -54,8 +56,12 @@ public:
       /// @brief if restart, read and save Hexx, and directly use it during the first outer loop.
       bool restart = false;
 
-      void add_loaded_Hexx(const int ik);
+      const int istep = 0; // the ion step
 
+      void add_loaded_Hexx(const int ik);
+     
+      const UnitCell& ucell;
+      
       const K_Vectors& kv;
 
       // if k points has no shift, use cell_nearest to reduce the memory cost

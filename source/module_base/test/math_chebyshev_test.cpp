@@ -50,8 +50,9 @@ class toolfunc
     void sigma_y(std::complex<double>* spin_in, std::complex<double>* spin_out, const int m = 1)
     {
         const std::complex<double> j(0.0, 1.0);
-        if (this->LDA < 2)
+        if (this->LDA < 2) {
             this->LDA = 2;
+}
         for (int i = 0; i < m; ++i)
         {
             spin_out[LDA * i] = -factor * j * spin_in[LDA * i + 1];
@@ -299,10 +300,11 @@ TEST_F(MathChebyshevTest, tracepolyA)
     // Trace:  even function: 2 ; odd function 0.
     for (int i = 0; i < norder; ++i)
     {
-        if (i % 2 == 0)
+        if (i % 2 == 0) {
             EXPECT_NEAR(p_chetest->polytrace[i], 2, 1.e-8);
-        else
+        } else {
             EXPECT_NEAR(p_chetest->polytrace[i], 0, 1.e-8);
+}
     }
     delete[] v;
 
@@ -321,10 +323,11 @@ TEST_F(MathChebyshevTest, tracepolyA)
     // Trace:  even function: 2 ; odd function 0.
     for (int i = 0; i < norder; ++i)
     {
-        if (i % 2 == 0)
+        if (i % 2 == 0) {
             EXPECT_NEAR(p_chetest->polytrace[i], 2, 1.e-8);
-        else
+        } else {
             EXPECT_NEAR(p_chetest->polytrace[i], 0, 1.e-8);
+}
     }
     fun.LDA = 2;
     delete[] v;
@@ -346,15 +349,15 @@ TEST_F(MathChebyshevTest, checkconverge)
     double tmin = -1.1;
     double tmax = 1.1;
     bool converge;
-    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, tmax, tmin, 0.2);
+    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, 2, tmax, tmin, 0.2);
     EXPECT_TRUE(converge);
-    converge = p_chetest->checkconverge(fun_sigma_y, v + 2, 2, tmax, tmin, 0.2);
+    converge = p_chetest->checkconverge(fun_sigma_y, v + 2, 2, 2, tmax, tmin, 0.2);
     EXPECT_TRUE(converge);
     EXPECT_NEAR(tmin, -1.1, 1e-8);
     EXPECT_NEAR(tmax, 1.1, 1e-8);
 
     tmax = -1.1;
-    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, tmax, tmin, 2.2);
+    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, 2, tmax, tmin, 2.2);
     EXPECT_TRUE(converge);
     EXPECT_NEAR(tmin, -1.1, 1e-8);
     EXPECT_NEAR(tmax, 1.1, 1e-8);
@@ -363,12 +366,12 @@ TEST_F(MathChebyshevTest, checkconverge)
     v[0] = std::complex<double>(0, 1), v[1] = 1;
     fun.factor = 1.5;
     tmin = -1.1, tmax = 1.1;
-    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, tmax, tmin, 0.2);
+    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, 2, tmax, tmin, 0.2);
     EXPECT_FALSE(converge);
 
     fun.factor = -1.5;
     tmin = -1.1, tmax = 1.1;
-    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, tmax, tmin, 0.2);
+    converge = p_chetest->checkconverge(fun_sigma_y, v, 2, 2, tmax, tmin, 0.2);
     EXPECT_FALSE(converge);
     fun.factor = 1;
 
@@ -379,7 +382,7 @@ TEST_F(MathChebyshevTest, checkconverge)
 TEST_F(MathChebyshevTest, recurs)
 {
     testing::internal::CaptureStdout();
-    EXPECT_EXIT(ModuleBase::Chebyshev<double> noneche(0), ::testing::ExitedWithCode(0), "");
+    EXPECT_EXIT(ModuleBase::Chebyshev<double> noneche(0), ::testing::ExitedWithCode(1), "");
     std::string output = testing::internal::GetCapturedStdout();
     EXPECT_THAT(output, testing::HasSubstr("NOTICE"));
 
@@ -632,9 +635,9 @@ TEST_F(MathChebyshevTest, checkconverge_float)
 
     auto fun_sigma_yf
         = [&](std::complex<float>* in, std::complex<float>* out, const int m = 1) { fun.sigma_y(in, out, m); };
-    converge = p_fchetest->checkconverge(fun_sigma_yf, v, 2, tmax, tmin, 0.2);
+    converge = p_fchetest->checkconverge(fun_sigma_yf, v, 2, 2, tmax, tmin, 0.2);
     EXPECT_TRUE(converge);
-    converge = p_fchetest->checkconverge(fun_sigma_yf, v + 2, 2, tmax, tmin, 0.2);
+    converge = p_fchetest->checkconverge(fun_sigma_yf, v + 2, 2, 2, tmax, tmin, 0.2);
     EXPECT_TRUE(converge);
     EXPECT_NEAR(tmin, -1.1, 1e-6);
     EXPECT_NEAR(tmax, 1.1, 1e-6);

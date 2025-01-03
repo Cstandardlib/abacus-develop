@@ -15,6 +15,10 @@ Meta<OperatorPW<T, Device>>::Meta(Real tpiba_in,
                                        const int vk_col,
                                        const ModulePW::PW_Basis_K* wfcpw_in)
 {
+    if(isk_in == nullptr || tpiba_in < 1e-10 || wfcpw_in == nullptr)
+    {
+        ModuleBase::WARNING_QUIT("MetaPW", "Constuctor of Operator::MetaPW is failed, please check your code!");
+    }
     this->classname = "Meta";
     this->cal_type = calculation_type::pw_meta;
     this->isk = isk_in;
@@ -24,10 +28,7 @@ Meta<OperatorPW<T, Device>>::Meta(Real tpiba_in,
     this->vk_col = vk_col;
     this->wfcpw = wfcpw_in;
     resmem_complex_op()(this->ctx, this->porter, this->wfcpw->nmaxgr, "Meta<PW>::porter");
-    if(this->isk == nullptr || this->tpiba < 1e-10 || this->wfcpw == nullptr)
-    {
-        ModuleBase::WARNING_QUIT("MetaPW", "Constuctor of Operator::MetaPW is failed, please check your code!");
-    }
+
 }
 
 template<typename T, typename Device>
@@ -43,7 +44,8 @@ void Meta<OperatorPW<T, Device>>::act(
     const int npol,
     const T* tmpsi_in,
     T* tmhpsi,
-    const int ngk_ik)const
+    const int ngk_ik,
+    const bool is_first_node)const
 {
     if (XC_Functional::get_func_type() != 3)
     {
@@ -51,6 +53,10 @@ void Meta<OperatorPW<T, Device>>::act(
     }
 
     ModuleBase::timer::tick("Operator", "MetaPW");
+    if(is_first_node)
+    {
+        setmem_complex_op()(this->ctx, tmhpsi, 0, nbasis*nbands/npol);
+    }
 
     const int current_spin = this->isk[this->ik];
     int max_npw = nbasis / npol;

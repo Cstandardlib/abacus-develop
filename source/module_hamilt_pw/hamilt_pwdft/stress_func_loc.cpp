@@ -8,8 +8,10 @@
 
 //calculate local pseudopotential stress in PW or VL_dVL stress in LCAO
 template <typename FPTYPE, typename Device>
-void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
+void Stress_Func<FPTYPE, Device>::stress_loc(const UnitCell& ucell,
+											 ModuleBase::matrix& sigma,
                                              ModulePW::PW_Basis* rho_basis,
+											 const ModuleBase::matrix& vloc,
                                              const Structure_Factor* p_sf,
                                              const bool is_pw,
                                              const Charge* const chr)
@@ -23,10 +25,10 @@ void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
 
 	const int nspin_rho = (PARAM.inp.nspin == 2) ? 2 : 1;
 
-	if (PARAM.globalv.gamma_only_pw && is_pw) { fact=2.0;
-}
-
-    
+	if (PARAM.inp.gamma_only && is_pw) 
+	{ 
+		fact=2.0;
+	}
 
 	std::vector<std::complex<FPTYPE>> aux(rho_basis->nmaxgr);
 
@@ -52,11 +54,11 @@ void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
 				aux[ir] = std::complex<FPTYPE>(chr->rho[0][ir], 0.0 );
 			}
 		}
-		for (int is = 1; is < nspin_rho; is++)
+		if(nspin_rho == 2)
 		{
 			for (int ir = irb; ir < ir_end; ++ir)
 			{ // accumulate aux
-				aux[ir] += std::complex<FPTYPE>(chr->rho[is][ir], 0.0 );
+				aux[ir] += std::complex<FPTYPE>(chr->rho[1][ir], 0.0 );
 			}
 		}
  	}
@@ -68,29 +70,29 @@ void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
 	if(is_pw)
 	{
 #pragma omp parallel for collapse(2) reduction(+:evloc)
-		for (int it=0; it<GlobalC::ucell.ntype; it++)
+		for (int it=0; it<ucell.ntype; it++)
 		{
 			for (int ig=0; ig<rho_basis->npw; ig++)
 			{
                 if (rho_basis->ig_gge0 == ig) {
-                    evloc += GlobalC::ppcell.vloc(it, rho_basis->ig2igg[ig])
+                    evloc += vloc(it, rho_basis->ig2igg[ig])
                              * (p_sf->strucFac(it, ig) * conj(aux[ig])).real();
                 } else {
-                    evloc += GlobalC::ppcell.vloc(it, rho_basis->ig2igg[ig])
+                    evloc += vloc(it, rho_basis->ig2igg[ig])
                              * (p_sf->strucFac(it, ig) * conj(aux[ig]) * fact).real();
 }
             }
 		}
     }
-    for (int it = 0; it < GlobalC::ucell.ntype; ++it)
+    for (int it = 0; it < ucell.ntype; ++it)
     {
-        const Atom* atom = &GlobalC::ucell.atoms[it];
+        const Atom* atom = &ucell.atoms[it];
 		if(atom->coulomb_potential)
 		{
 		//
 		// special case: pseudopotential is coulomb 1/r potential
 		//
-			this->dvloc_coulomb (atom->ncpp.zv, dvloc.data(), rho_basis);
+			this->dvloc_coulomb (ucell,atom->ncpp.zv, dvloc.data(), rho_basis);
 		//
 		}
 		else
@@ -99,7 +101,7 @@ void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
 		// normal case: dvloc contains dV_loc(G)/dG
 		//
 			this->dvloc_of_g ( atom->ncpp.msh, atom->ncpp.rab.data(), atom->ncpp.r.data(),
-					atom->ncpp.vloc_at.data(), atom->ncpp.zv, dvloc.data(), rho_basis, GlobalC::ucell);
+					atom->ncpp.vloc_at.data(), atom->ncpp.zv, dvloc.data(), rho_basis, ucell);
 		//
 		}
 #ifndef _OPENMP
@@ -118,7 +120,7 @@ void Stress_Func<FPTYPE, Device>::stress_loc(ModuleBase::matrix& sigma,
 				{
                     local_sigma(l, m) = local_sigma(l, m)
                                         + (conj(aux[ig]) * p_sf->strucFac(it, ig)).real() * 2.0
-                                              * dvloc[rho_basis->ig2igg[ig]] * GlobalC::ucell.tpiba2
+                                              * dvloc[rho_basis->ig2igg[ig]] * ucell.tpiba2
                                               * rho_basis->gcar[ig][l] * rho_basis->gcar[ig][m] * fact;
                 }
 			}
@@ -276,7 +278,10 @@ const UnitCell& ucell_in
 }
 
 template <typename FPTYPE, typename Device>
-void Stress_Func<FPTYPE, Device>::dvloc_coulomb(const FPTYPE& zp, FPTYPE* dvloc, ModulePW::PW_Basis* rho_basis)
+void Stress_Func<FPTYPE, Device>::dvloc_coulomb(const UnitCell& ucell, 
+												const FPTYPE& zp, 
+												FPTYPE* dvloc, 
+												ModulePW::PW_Basis* rho_basis)
 {
     int igl0;
 	// start from |G|=0 or not.
@@ -294,8 +299,8 @@ void Stress_Func<FPTYPE, Device>::dvloc_coulomb(const FPTYPE& zp, FPTYPE* dvloc,
 #endif
     for (int i = igl0; i < rho_basis->ngg; i++)
     {
-        dvloc[i] = ModuleBase::FOUR_PI * zp * ModuleBase::e2 / GlobalC::ucell.omega
-                   / pow((GlobalC::ucell.tpiba2 * rho_basis->gg_uniq[i]), 2);
+        dvloc[i] = ModuleBase::FOUR_PI * zp * ModuleBase::e2 / ucell.omega
+                   / pow((ucell.tpiba2 * rho_basis->gg_uniq[i]), 2);
     }
 
     return;

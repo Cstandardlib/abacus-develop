@@ -3,12 +3,12 @@
 #include "module_parameter/parameter.h"
 #undef private
 #include "../psi_initializer.h"
-#include "../psi_initializer_random.h"
 #include "../psi_initializer_atomic.h"
-#include "../psi_initializer_nao.h"
 #include "../psi_initializer_atomic_random.h"
+#include "../psi_initializer_nao.h"
 #include "../psi_initializer_nao_random.h"
-
+#include "../psi_initializer_random.h"
+#include "module_hamilt_pw/hamilt_pwdft/VL_in_pw.h"
 
 /*
 =========================
@@ -79,7 +79,7 @@ InfoNonlocal::~InfoNonlocal() {}
 #endif
 Structure_Factor::Structure_Factor() {}
 Structure_Factor::~Structure_Factor() {}
-void Structure_Factor::setup_structure_factor(UnitCell* Ucell, const ModulePW::PW_Basis* rho_basis) {}
+void Structure_Factor::setup_structure_factor(const UnitCell* Ucell, const Parallel_Grid&, const ModulePW::PW_Basis* rho_basis) {}
 std::complex<double>* Structure_Factor::get_sk(int ik, int it, int ia, ModulePW::PW_Basis_K const*wfc_basis) const
 {
     int npw = wfc_basis->npwk[ik];
@@ -150,14 +150,12 @@ class PsiIntializerUnitTest : public ::testing::Test {
             this->p_ucell->atoms[0].label = "Si";
             this->p_ucell->atoms[0].mass = 28.0855;
             this->p_ucell->atoms[0].na = 1;
-            this->p_ucell->atoms[0].angle1 = new double[1];
-            this->p_ucell->atoms[0].angle1[0] = 0.0;
-            this->p_ucell->atoms[0].angle2 = new double[1];
-            this->p_ucell->atoms[0].angle2[0] = 0.0;
+            this->p_ucell->atoms[0].angle1.resize(1, 0.0);
+            this->p_ucell->atoms[0].angle2.resize(1, 0.0);
             // atom position
-            this->p_ucell->atoms[0].tau[0] = {0.0, 0.0, 0.0};
-            this->p_ucell->atoms[0].taud[0] = {0.25, 0.25, 0.25};
-            this->p_ucell->atoms[0].mbl[0] = {0, 0, 0};
+            this->p_ucell->atoms[0].tau.resize(1, {0.0, 0.0, 0.0});
+            this->p_ucell->atoms[0].taud.resize(1, {0.25, 0.25, 0.25});
+            this->p_ucell->atoms[0].mbl.resize(1, {0, 0, 0});
             // atom pseudopotential
             if(this->p_ucell->pseudo_fn != nullptr) { delete[] this->p_ucell->pseudo_fn;
 }
@@ -200,8 +198,7 @@ class PsiIntializerUnitTest : public ::testing::Test {
             this->p_ucell->orbital_fn = new std::string[1];
             this->p_ucell->orbital_fn[0] = "Si_gga_8au_60Ry_2s2p1d.orb";
             this->p_ucell->atoms[0].nwl = 2;
-            delete[] this->p_ucell->atoms[0].l_nchi;
-            this->p_ucell->atoms[0].l_nchi = new int[3];
+            this->p_ucell->atoms[0].l_nchi.resize(3);
             this->p_ucell->atoms[0].l_nchi[0] = 2;
             this->p_ucell->atoms[0].l_nchi[1] = 2;
             this->p_ucell->atoms[0].l_nchi[2] = 1;

@@ -68,9 +68,6 @@ UnitCell::UnitCell()
 UnitCell::~UnitCell()
 {
 }
-void UnitCell::update_pos_tau(const double* pos)
-{
-}
 void UnitCell::print_tau(void) const
 {
 }
@@ -83,13 +80,13 @@ Magnetism::~Magnetism()
 Atom::Atom()
 {
     na = 2;
-    tau = new ModuleBase::Vector3<double>[na];
-    mbl = new ModuleBase::Vector3<int>[na];
+    tau.resize(na);
+    dis.resize(na);
+    mbl.resize(na);
+    taud.resize(na);
 }
 Atom::~Atom()
 {
-    delete[] tau;
-    delete[] mbl;
 }
 Atom_pseudo::Atom_pseudo()
 {

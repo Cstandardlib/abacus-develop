@@ -10,8 +10,6 @@ namespace GlobalC
 UnitCell::UnitCell(){};
 UnitCell::~UnitCell(){};
 
-void UnitCell::remake_cell(){};
-
 void UnitCell::update_pos_taud(double* posd_in)
 {
     int iat = 0;
@@ -38,7 +36,6 @@ void UnitCell::print_stru_file(const std::string& fn,
                                const bool& dpks_desc,
                                const int& iproc) const {};
 void UnitCell::print_tau()const{};
-void UnitCell::setup_cell_after_vc(std::ofstream &log){};
 
 Magnetism::Magnetism(){};
 Magnetism::~Magnetism(){};
@@ -54,4 +51,4 @@ void ModuleSymmetry::Symmetry::symmetrize_mat3(ModuleBase::matrix& sigma, const 
 void ModuleSymmetry::Symmetry::symmetrize_vec3_nat(double* v)const {};
 Structure_Factor::Structure_Factor() {};
 Structure_Factor::~Structure_Factor(){};
-void Structure_Factor::setup_structure_factor(UnitCell* Ucell, const ModulePW::PW_Basis* rho_basis){};
+void Structure_Factor::setup_structure_factor(const UnitCell* Ucell, const Parallel_Grid&, const ModulePW::PW_Basis* rho_basis){};

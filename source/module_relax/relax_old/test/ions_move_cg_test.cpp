@@ -1,5 +1,7 @@
+#include <regex>
 #include "for_test.h"
 #include "gtest/gtest.h"
+#include "gmock/gmock.h"
 #define private public
 #include "module_parameter/parameter.h"
 #include "module_relax/relax_old/ions_move_basic.h"
@@ -36,7 +38,22 @@ class IonsMoveCGTest : public ::testing::Test
     {
         // Clean up after each test
     }
-
+    void setupucell(UnitCell& ucell)
+    {
+        for (int it = 0; it < ucell.ntype; it++)
+        {
+            Atom* atom = &ucell.atoms[it];
+            for (int ia = 0; ia < atom->na; ia++)
+            {
+                for (int ik = 0; ik < 3; ++ik)
+                {
+                    atom->tau[ia][ik] = 1;
+                    atom->mbl[ia][ik] = 1;
+                }
+            }
+        }
+        ucell.lat.GT.Zero();
+    }
     Ions_Move_CG im_cg;
 };
 
@@ -80,6 +97,7 @@ TEST_F(IonsMoveCGTest, TestStartConverged)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = true;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     double etot = 0.0;
 
@@ -89,7 +107,8 @@ TEST_F(IonsMoveCGTest, TestStartConverged)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = " largest force is 0, no movement is possible.\n it may converged, otherwise no "
+    std::string expected_output = "\n Largest gradient in force is 0 eV/A.\n Threshold is -1 eV/A.\n"
+                                  " largest force is 0, no movement is possible.\n it may converged, otherwise no "
                                   "movement of atom is allowed.\n end of geometry optimization\n                       "
                                   "             istep = 1\n                         update iteration = 5\n";
     std::ifstream ifs("log");
@@ -97,7 +116,10 @@ TEST_F(IonsMoveCGTest, TestStartConverged)
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+
+    std::regex pattern(R"(==> .*::.*\t[\d\.]+ GB\t\d+ s\n )");
+    output = std::regex_replace(output, pattern, "");
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, true);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_DOUBLE_EQ(Ions_Move_Basic::largest_grad, 0.0);
@@ -112,6 +134,7 @@ TEST_F(IonsMoveCGTest, TestStartSd)
     Ions_Move_Basic::relax_method = "cg_bfgs";
     Ions_Move_CG::RELAX_CG_THR = 100.0;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.01;
     double etot = 0.0;
@@ -122,13 +145,14 @@ TEST_F(IonsMoveCGTest, TestStartSd)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");
@@ -144,6 +168,7 @@ TEST_F(IonsMoveCGTest, TestStartTrialGoto)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = false;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.1;
     double etot = 0.0;
@@ -159,13 +184,14 @@ TEST_F(IonsMoveCGTest, TestStartTrialGoto)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.0257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");
@@ -181,6 +207,7 @@ TEST_F(IonsMoveCGTest, TestStartTrial)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = false;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.01;
     double etot = 0.0;
@@ -195,13 +222,14 @@ TEST_F(IonsMoveCGTest, TestStartTrial)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");
@@ -217,6 +245,7 @@ TEST_F(IonsMoveCGTest, TestStartNoTrialGotoCase1)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = false;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.1;
     double etot = 0.0;
@@ -233,13 +262,14 @@ TEST_F(IonsMoveCGTest, TestStartNoTrialGotoCase1)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.0257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");
@@ -255,6 +285,7 @@ TEST_F(IonsMoveCGTest, TestStartNoTrialGotoCase2)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = false;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.01;
     double etot = 0.0;
@@ -270,13 +301,14 @@ TEST_F(IonsMoveCGTest, TestStartNoTrialGotoCase2)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");
@@ -292,6 +324,7 @@ TEST_F(IonsMoveCGTest, TestStartNoTrial)
     Ions_Move_Basic::istep = 1;
     Ions_Move_Basic::converged = false;
     UnitCell ucell;
+    setupucell(ucell);
     ModuleBase::matrix force(2, 3);
     force(0, 0) = 0.01;
     double etot = 0.0;
@@ -308,13 +341,14 @@ TEST_F(IonsMoveCGTest, TestStartNoTrial)
     GlobalV::ofs_running.close();
 
     // Check output
-    std::string expected_output = "\n Ion relaxation is not converged yet (threshold is 0.0257111)\n";
+    std::string expected_output = "\n Largest gradient in force is 0.0257111 eV/A.\n Threshold is -1 eV/A.\n\n"
+                                  " Ion relaxation is not converged yet (threshold is 0.0257111)\n";
     std::ifstream ifs("log");
     std::string output((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     ifs.close();
     std::remove("log");
 
-    EXPECT_EQ(expected_output, output);
+    EXPECT_THAT(output, testing::HasSubstr(expected_output));
     EXPECT_EQ(Ions_Move_Basic::converged, false);
     EXPECT_EQ(Ions_Move_Basic::update_iter, 5);
     EXPECT_EQ(Ions_Move_Basic::relax_method, "bfgs");

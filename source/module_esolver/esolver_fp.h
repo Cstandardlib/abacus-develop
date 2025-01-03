@@ -6,73 +6,84 @@
 #include "module_cell/module_symmetry/symmetry.h"
 #include "module_elecstate/elecstate.h"
 #include "module_elecstate/module_charge/charge_extra.h"
+#include "module_hamilt_general/module_surchem/surchem.h"
+#include "module_hamilt_pw/hamilt_pwdft/VL_in_pw.h"
 #include "module_hamilt_pw/hamilt_pwdft/structure_factor.h"
 
 #include <fstream>
 
 //! The First-Principles (FP) Energy Solver Class
 /**
- * This class represents components that needed in 
+ * This class represents components that needed in
  * first-principles energy solver, such as the plane
  * wave basis, the structure factors, and the k points.
  *
-*/
+ */
 
 namespace ModuleESolver
 {
-    class ESolver_FP : public ESolver
-    {
-    public:
+class ESolver_FP : public ESolver
+{
+  public:
+    //! Constructor
+    ESolver_FP();
 
-        ModulePW::PW_Basis* pw_rho;
+    //! Deconstructor
+    virtual ~ESolver_FP();
 
-        /**
-         * @brief same as pw_rho for ncpp. Here 'd' stands for 'dense'
-         * dense grid for for uspp, used for ultrasoft augmented charge density.
-         * charge density and potential are defined on dense grids,
-         * but effective potential needs to be interpolated on smooth grids in order to compute Veff|psi>
-         */
-        ModulePW::PW_Basis* pw_rhod;
-        ModulePW::PW_Basis_Big* pw_big; ///< [temp] pw_basis_big class
+    //! Initialize of the first-principels energy solver
+    virtual void before_all_runners(UnitCell& ucell, const Input_para& inp) override;
 
-        //! Constructor
-        ESolver_FP();
+  protected:
+    //! Something to do before SCF iterations.
+    virtual void before_scf(UnitCell& ucell, const int istep);
 
-        //! Deconstructor
-        virtual ~ESolver_FP();
+    //! Something to do after SCF iterations when SCF is converged or comes to the max iter step.
+    virtual void after_scf(UnitCell& ucell, const int istep);
 
-        //! Initialize of the first-principels energy solver
-        virtual void before_all_runners(const Input_para& inp, UnitCell& cell) override;
+    //! Something to do after hamilt2density function in each iter loop.
+    virtual void iter_finish(UnitCell& ucell, const int istep, int& iter);
 
-        virtual void init_after_vc(const Input_para& inp, UnitCell& cell);    // liuyu add 2023-03-09
+    //! ------------------------------------------------------------------------------
+    //! These pointers will be deleted in the free_pointers() function every ion step.
+    //! ------------------------------------------------------------------------------
+    elecstate::ElecState* pelec = nullptr; ///< Electronic states
 
-        //! Electronic states
-        elecstate::ElecState* pelec = nullptr;
+    //! ------------------------------------------------------------------------------
 
-        //! Electorn charge density
-        Charge chr;
+    //! Electorn charge density
+    Charge chr;
 
-        //! Non-Self-Consistant Filed (NSCF) calculations
-        virtual void nscf(){};
+    //! Structure factors that used with plane-wave basis set
+    Structure_Factor sf;
 
-        //! Structure factors that used with plane-wave basis set
-        Structure_Factor sf;
+    //! K points in Brillouin zone
+    K_Vectors kv;
 
-        //! K points in Brillouin zone
-        K_Vectors kv;
+    //! Plane-wave basis set for charge density
+    ModulePW::PW_Basis* pw_rho;
 
-      protected:
-        //! Something to do after SCF iterations when SCF is converged or comes to the max iter step.
-        virtual void after_scf(const int istep);
+    //! parallel for rho grid
+    Parallel_Grid Pgrid;
 
-        //! Charge extrapolation
-        Charge_Extra CE;
+    //! pointer to local pseudopotential
+    pseudopot_cell_vl locpp;
 
-      private:
-       
-        //! Print charge density using FFT
-        void print_rhofft(const Input_para& inp, std::ofstream &ofs);
-    };
-}
+    /**
+     * @brief same as pw_rho for ncpp. Here 'd' stands for 'dense'
+     * dense grid for for uspp, used for ultrasoft augmented charge density.
+     * charge density and potential are defined on dense grids,
+     * but effective potential needs to be interpolated on smooth grids in order to compute Veff|psi>
+     */
+    ModulePW::PW_Basis* pw_rhod;
+    ModulePW::PW_Basis_Big* pw_big; ///< [temp] pw_basis_big class
+
+    //! Charge extrapolation
+    Charge_Extra CE;
+
+    // solvent model
+    surchem solvent;
+};
+} // namespace ModuleESolver
 
 #endif

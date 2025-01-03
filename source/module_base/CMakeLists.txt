@@ -6,7 +6,6 @@ list (APPEND LIBM_SRC
   libm/sincos.cpp
 )
 endif()
-
 add_library(
     base
     OBJECT
@@ -51,8 +50,11 @@ add_library(
     parallel_global.cpp
     parallel_comm.cpp
     parallel_reduce.cpp
+    parallel_device.cpp
     spherical_bessel_transformer.cpp
     cubic_spline.cpp
+    parallel_2d.cpp
+    projgen.cpp
     module_mixing/mixing_data.cpp
     module_mixing/mixing.cpp
     module_mixing/plain_mixing.cpp
@@ -60,6 +62,8 @@ add_library(
     module_mixing/broyden_mixing.cpp
     ${LIBM_SRC}
 )
+
+target_link_libraries(base PUBLIC container)
 
 add_subdirectory(module_container)
 

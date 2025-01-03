@@ -19,9 +19,6 @@ Driver::Driver()
 
 Driver::~Driver()
 {
-    // Release the device memory within singleton object GlobalC::ppcell
-    // before the main function exits.
-    GlobalC::ppcell.release_memory();
 }
 
 void Driver::init()
@@ -46,9 +43,6 @@ void Driver::init()
     // (4) close all of the running logs
     ModuleBase::Global_File::close_all_log(GlobalV::MY_RANK, PARAM.inp.out_alllog,PARAM.inp.calculation);
 
-    // (5) output the json file
-    // Json::create_Json(&GlobalC::ucell.symm,GlobalC::ucell.atoms,&INPUT);
-    Json::create_Json(&GlobalC::ucell, PARAM);
 }
 
 void Driver::print_start_info()

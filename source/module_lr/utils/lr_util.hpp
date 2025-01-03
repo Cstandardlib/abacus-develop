@@ -27,14 +27,12 @@ namespace LR_Util
     }
 
     //====== newers and deleters========
-    //(arbitrary dimention will be supported in the future)
-
     /// @brief  new 2d pointer
     /// @tparam T
     /// @param size1
     /// @param size2
     template <typename T>
-    void new_p2(T**& p2, size_t size1, size_t size2)
+    void _allocate_2order_nested_ptr(T**& p2, size_t size1, size_t size2)
     {
         p2 = new T * [size1];
         for (size_t i = 0; i < size1; ++i)
@@ -43,54 +41,20 @@ namespace LR_Util
         }
     };
 
-    /// @brief  new 3d pointer
-    /// @tparam T
-    /// @param size1
-    /// @param size2
-    /// @param size3
-    template <typename T>
-    void new_p3(T***& p3, size_t size1, size_t size2, size_t size3)
-    {
-        p3 = new T * *[size1];
-        for (size_t i = 0; i < size1; ++i)
-        {
-            new_p2(p3[i], size2, size3);
-        }
-    };
-
     /// @brief  delete 2d pointer 
     /// @tparam T 
     /// @param p2 
     /// @param size 
     template <typename T>
-    void delete_p2(T** p2, size_t size)
+    void _deallocate_2order_nested_ptr(T** p2, size_t size)
     {
         if (p2 != nullptr)
         {
             for (size_t i = 0; i < size; ++i)
             {
-                if (p2[i] != nullptr) { delete[] p2[i];
-}
+                if (p2[i] != nullptr) { delete[] p2[i]; }
             }
             delete[] p2;
-        }
-    };
-
-    /// @brief  delete 3d pointer 
-    /// @tparam T 
-    /// @param p2 
-    /// @param size1
-    /// @param size2
-    template <typename T>
-    void delete_p3(T*** p3, size_t size1, size_t size2)
-    {
-        if (p3 != nullptr)
-        {
-            for (size_t i = 0; i < size1; ++i)
-            {
-                delete_p2(p3[i], size2);
-            }
-            delete[] p3;
         }
     };
 
@@ -131,15 +95,23 @@ namespace LR_Util
 }
     }
 
+    /// get the Psi wrapper of the selected spin from the Psi object
+    template<typename T>
+    psi::Psi<T> get_psi_spin(const psi::Psi<T>& psi_in, const int& is, const int& nk)
+    {
+        return psi::Psi<T>(&psi_in(is * nk, 0, 0), psi_in, nk, psi_in.get_nbands());
+    }
+
     /// psi(nk=1, nbands=nb, nk * nbasis) -> psi(nb, nk, nbasis) without memory copy
     template<typename T, typename Device>
     psi::Psi<T, Device> k1_to_bfirst_wrapper(const psi::Psi<T, Device>& psi_kfirst, int nk_in, int nbasis_in)
     {
         assert(psi_kfirst.get_nk() == 1);
         assert(nk_in * nbasis_in == psi_kfirst.get_nbasis());
+
         int ib_now = psi_kfirst.get_current_b();
         psi_kfirst.fix_b(0);    // for get_pointer() to get the head pointer
-        psi::Psi<T, Device> psi_bfirst(psi_kfirst.get_pointer(), nk_in, psi_kfirst.get_nbands(), nbasis_in, psi_kfirst.get_ngk_pointer(), false);
+        psi::Psi<T, Device> psi_bfirst(psi_kfirst.get_pointer(), nk_in, psi_kfirst.get_nbands(), nbasis_in, false);
         psi_kfirst.fix_b(ib_now);
         return psi_bfirst;
     }
@@ -150,8 +122,9 @@ namespace LR_Util
     {
         int ib_now = psi_bfirst.get_current_b();
         int ik_now = psi_bfirst.get_current_k();
+
         psi_bfirst.fix_kb(0, 0);    // for get_pointer() to get the head pointer
-        psi::Psi<T, Device> psi_kfirst(psi_bfirst.get_pointer(), 1, psi_bfirst.get_nbands(), psi_bfirst.get_nk() * psi_bfirst.get_nbasis(), psi_bfirst.get_ngk_pointer(), true);
+        psi::Psi<T, Device> psi_kfirst(psi_bfirst.get_pointer(), 1, psi_bfirst.get_nbands(), psi_bfirst.get_nk() * psi_bfirst.get_nbasis(), true);
         psi_bfirst.fix_kb(ik_now, ib_now);
         return psi_kfirst;
     }

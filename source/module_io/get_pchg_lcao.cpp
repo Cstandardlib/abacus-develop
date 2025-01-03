@@ -49,7 +49,8 @@ void IState_Charge::begin(Gint_Gamma& gg,
                           const std::string& global_out_dir,
                           std::ofstream& ofs_warning,
                           const UnitCell* ucell_in,
-                          Grid_Driver* GridD_in,
+                          const Parallel_Grid& pgrid,
+                          const Grid_Driver* GridD_in,
                           const K_Vectors& kv)
 {
     ModuleBase::TITLE("IState_Charge", "begin");
@@ -130,21 +131,12 @@ void IState_Charge::begin(Gint_Gamma& gg,
                 // Use a const vector to store efermi for all spins, replace the original implementation:
                 // const double ef_tmp = pelec->eferm.get_efval(is);
                 double ef_spin = ef_all_spin[is];
-                ModuleIO::write_cube(
-#ifdef __MPI
-                    bigpw_bz,
-                    bigpw_nbz,
-                    rhopw_nplane,
-                    rhopw_startz_current,
-#endif
+                ModuleIO::write_vdata_palgrid(pgrid,
                     rho_save[is].data(),
                     is,
                     nspin,
                     0,
                     ssc.str(),
-                    rhopw_nx,
-                    rhopw_ny,
-                    rhopw_nz,
                     ef_spin,
                     ucell_in);
             }
@@ -181,7 +173,8 @@ void IState_Charge::begin(Gint_k& gk,
                           const std::string& global_out_dir,
                           std::ofstream& ofs_warning,
                           UnitCell* ucell_in,
-                          Grid_Driver* GridD_in,
+                          const Parallel_Grid& pgrid,
+                          const Grid_Driver* GridD_in,
                           const K_Vectors& kv,
                           const bool if_separate_k,
                           Parallel_Grid* Pgrid,
@@ -265,21 +258,12 @@ void IState_Charge::begin(Gint_k& gk,
                         ssc << global_out_dir << "BAND" << ib + 1 << "_K" << ik + 1 << "_SPIN" << is + 1 << "_CHG.cube";
 
                         double ef_spin = ef_all_spin[is];
-                        ModuleIO::write_cube(
-#ifdef __MPI
-                            bigpw_bz,
-                            bigpw_nbz,
-                            rhopw_nplane,
-                            rhopw_startz_current,
-#endif
+                        ModuleIO::write_vdata_palgrid(pgrid,
                             rho_save[is].data(),
                             is,
                             nspin,
                             0,
                             ssc.str(),
-                            rhopw_nx,
-                            rhopw_ny,
-                            rhopw_nz,
                             ef_spin,
                             ucell_in);
                     }
@@ -333,21 +317,12 @@ void IState_Charge::begin(Gint_k& gk,
                     ssc << global_out_dir << "BAND" << ib + 1 << "_SPIN" << is + 1 << "_CHG.cube";
 
                     double ef_spin = ef_all_spin[is];
-                    ModuleIO::write_cube(
-#ifdef __MPI
-                        bigpw_bz,
-                        bigpw_nbz,
-                        rhopw_nplane,
-                        rhopw_startz_current,
-#endif
+                    ModuleIO::write_vdata_palgrid(pgrid,
                         rho_save[is].data(),
                         is,
                         nspin,
                         0,
                         ssc.str(),
-                        rhopw_nx,
-                        rhopw_ny,
-                        rhopw_nz,
                         ef_spin,
                         ucell_in);
                 }

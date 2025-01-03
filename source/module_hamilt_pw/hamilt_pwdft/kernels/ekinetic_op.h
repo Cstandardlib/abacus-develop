@@ -14,7 +14,7 @@ struct ekinetic_pw_op {
   /// \param nband : nbands
   /// \param npw : number of planewaves of current k point
   /// \param max_npw : max number of planewaves of all k points
-  /// \param tpiba2 : GlobalC::ucell.tpiba2
+  /// \param tpiba2 : ucell.tpiba2
   /// \param spin : current spin
   /// \param gk2_ik : GlobalC::wfcpw->gk2
   /// \param tmpsi_in : intermediate array
@@ -26,6 +26,7 @@ struct ekinetic_pw_op {
       const int& nband,
       const int& npw,
       const int& max_npw,
+      const bool& is_first_node,
       const FPTYPE& tpiba2,
       const FPTYPE* gk2_ik,
       std::complex<FPTYPE>* tmhpsi,
@@ -41,6 +42,7 @@ struct ekinetic_pw_op<FPTYPE, base_device::DEVICE_GPU>
                     const int& nband,
                     const int& npw,
                     const int& max_npw,
+                    const bool& is_first_node,
                     const FPTYPE& tpiba2,
                     const FPTYPE* gk2_ik,
                     std::complex<FPTYPE>* tmhpsi,

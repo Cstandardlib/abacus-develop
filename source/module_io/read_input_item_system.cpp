@@ -80,7 +80,7 @@ void ReadInput::item_system()
                                                 "get_wf",
                                                 "get_pchg",
                                                 "gen_bessel"};
-            if (!find_str(callist, calculation))
+            if (std::find(callist.begin(), callist.end(), calculation) == callist.end())
             {
                 const std::string warningstr = nofound_str(callist, "calculation");
                 ModuleBase::WARNING_QUIT("ReadInput", warningstr);
@@ -107,11 +107,11 @@ void ReadInput::item_system()
     }
     {
         Input_Item item("esolver_type");
-        item.annotation = "the energy solver: ksdft, sdft, ofdft, tddft, lj, dp";
+        item.annotation = "the energy solver: ksdft, sdft, ofdft, tddft, lj, dp, ks-lr, lr";
         read_sync_string(input.esolver_type);
         item.check_value = [](const Input_Item& item, const Parameter& para) {
             const std::vector<std::string> esolver_types = { "ksdft", "sdft", "ofdft", "tddft", "lj", "dp", "lr", "ks-lr" };
-            if (!find_str(esolver_types, para.input.esolver_type))
+            if (std::find(esolver_types.begin(), esolver_types.end(), para.input.esolver_type) == esolver_types.end())
             {
                 const std::string warningstr = nofound_str(esolver_types, "esolver_type");
                 ModuleBase::WARNING_QUIT("ReadInput", warningstr);
@@ -124,6 +124,12 @@ void ReadInput::item_system()
                 }
             }
         };
+        item.reset_value = [](const Input_Item& item, Parameter& para) {
+            if (para.input.esolver_type == "lr" && para.input.calculation == "scf")
+            {   // for LR-only calculation based on the ground-state, set calculation to "nscf"
+                para.input.calculation = "nscf";
+            }
+            };
         this->add_item(item);
     }
     {
@@ -153,6 +159,10 @@ void ReadInput::item_system()
                 para.input.symmetry = "0";
             }
             if (para.input.qo_switch)
+            {
+                para.input.symmetry = "-1"; // disable kpoint reduce
+            }
+            if (para.input.berry_phase)
             {
                 para.input.symmetry = "-1"; // disable kpoint reduce
             }
@@ -197,8 +207,8 @@ void ReadInput::item_system()
         item.annotation = "if calculate the force at the end of the electronic iteration";
         item.reset_value = [](const Input_Item& item, Parameter& para) {
             std::vector<std::string> use_force = {"cell-relax", "relax", "md"};
-            std::vector<std::string> not_use_force = {"get_wf", "get_pchg", "nscf", "get_S"};
-            if (find_str(use_force, para.input.calculation))
+            std::vector<std::string> not_use_force = {"get_wf", "get_pchg", "get_S"};
+            if (std::find(use_force.begin(), use_force.end(), para.input.calculation) != use_force.end())
             {
                 if (!para.input.cal_force)
                 {
@@ -206,7 +216,7 @@ void ReadInput::item_system()
                 }
                 para.input.cal_force = true;
             }
-            else if (find_str(not_use_force, para.input.calculation))
+            else if (std::find(not_use_force.begin(), not_use_force.end(), para.input.calculation) != not_use_force.end())
             {
                 if (para.input.cal_force)
                 {
@@ -246,6 +256,12 @@ void ReadInput::item_system()
                 para.input.bndpar = GlobalV::NPROC;
             }
         };
+        item.check_value = [](const Input_Item& item, const Parameter& para) {
+            if (GlobalV::NPROC % para.input.bndpar != 0)
+            {
+                ModuleBase::WARNING_QUIT("ReadInput", "The number of processors can not be divided by bndpar");
+            }
+        };
         this->add_item(item);
     }
     {
@@ -258,6 +274,24 @@ void ReadInput::item_system()
         Input_Item item("ecutwfc");
         item.annotation = "energy cutoff for wave functions";
         read_sync_double(input.ecutwfc);
+        item.reset_value = [](const Input_Item& item, Parameter& para) {
+            if (para.input.ecutwfc == 0){ // 0 means no input value
+                if (para.input.basis_type == "lcao")
+                {
+                    para.input.ecutwfc = 100;
+                }
+                else
+                {
+                    para.input.ecutwfc = 50;
+                }
+            }
+        };
+        item.check_value = [](const Input_Item& item, const Parameter& para) {
+            if (para.input.ecutwfc <= 0)
+            {
+                ModuleBase::WARNING_QUIT("ReadInput", "ecutwfc should be positive");
+            }
+        };
         this->add_item(item);
     }
     {
@@ -504,7 +538,7 @@ void ReadInput::item_system()
         };
         item.check_value = [](const Input_Item& item, const Parameter& para) {
             const std::vector<std::string> init_chgs = {"atomic", "file", "wfc", "auto"};
-            if (!find_str(init_chgs, para.input.init_chg))
+            if (std::find(init_chgs.begin(), init_chgs.end(), para.input.init_chg) == init_chgs.end())
             {
                 const std::string warningstr = nofound_str(init_chgs, "init_chg");
                 ModuleBase::WARNING_QUIT("ReadInput", warningstr);
@@ -520,6 +554,10 @@ void ReadInput::item_system()
             if (para.input.dm_to_rho && GlobalV::NPROC > 1)
             {
                 ModuleBase::WARNING_QUIT("ReadInput", "dm_to_rho is not available for parallel calculations");
+            }
+            if (para.input.dm_to_rho && para.inp.gamma_only)
+            {
+                ModuleBase::WARNING_QUIT("ReadInput", "dm_to_rho is not available for gamma_only calculations");
             }
             if (para.input.dm_to_rho)
             {

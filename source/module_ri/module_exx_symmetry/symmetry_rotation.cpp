@@ -95,8 +95,7 @@ namespace ModuleSymmetry
         auto  vec_conj = [](const std::vector<std::complex<double>>& z, const double scal = 1.0) -> std::vector<std::complex<double>>
             {
                 std::vector<std::complex<double>> z_conj(z.size());
-                for (int i = 0;i < z.size();++i) { z_conj[i] = std::conj(z[i]) * scal;
-}
+                for (int i = 0;i < z.size();++i) { z_conj[i] = std::conj(z[i]) * scal; }
                 return z_conj;
             };
         std::vector<std::vector<std::complex<double>>> dm_k_full;
@@ -110,8 +109,7 @@ namespace ModuleSymmetry
                     {
                         double factor = 1.0 / static_cast<double>(kv.kstars[ik_ibz].size());
                         std::vector<std::complex<double>> dm_scaled(pv.get_local_size());
-                        for (int i = 0;i < pv.get_local_size();++i) { dm_scaled[i] = factor * dm_k_ibz[ik_ibz + is * nk][i];
-}
+                        for (int i = 0;i < pv.get_local_size();++i) { dm_scaled[i] = factor * dm_k_ibz[ik_ibz + is * nk][i]; }
                         dm_k_full.push_back(dm_scaled);
                     }
                     else if (vec3_eq(isym_kvd.second, -kv.kvec_d[ik_ibz], this->eps_) && this->TRS_first_) {
@@ -323,13 +321,13 @@ namespace ModuleSymmetry
                             ofs << gmatc[isym].e21 << " " << gmatc[isym].e22 << " " << gmatc[isym].e23 << std::endl;
                             ofs << gmatc[isym].e31 << " " << gmatc[isym].e32 << " " << gmatc[isym].e33 << std::endl;
                             ofs << "gmatrix_direct=" << std::endl;
-                            ofs << GlobalC::ucell.symm.gmatrix[isym].e11 << " " << GlobalC::ucell.symm.gmatrix[isym].e12 << " " << GlobalC::ucell.symm.gmatrix[isym].e13 << std::endl;
-                            ofs << GlobalC::ucell.symm.gmatrix[isym].e21 << " " << GlobalC::ucell.symm.gmatrix[isym].e22 << " " << GlobalC::ucell.symm.gmatrix[isym].e23 << std::endl;
-                            ofs << GlobalC::ucell.symm.gmatrix[isym].e31 << " " << GlobalC::ucell.symm.gmatrix[isym].e32 << " " << GlobalC::ucell.symm.gmatrix[isym].e33 << std::endl;
+                            ofs << ucell.symm.gmatrix[isym].e11 << " " << ucell.symm.gmatrix[isym].e12 << " " << ucell.symm.gmatrix[isym].e13 << std::endl;
+                            ofs << ucell.symm.gmatrix[isym].e21 << " " << ucell.symm.gmatrix[isym].e22 << " " << ucell.symm.gmatrix[isym].e23 << std::endl;
+                            ofs << ucell.symm.gmatrix[isym].e31 << " " << ucell.symm.gmatrix[isym].e32 << " " << ucell.symm.gmatrix[isym].e33 << std::endl;
                             ofs << "kgmatrix_direct=" << std::endl;
-                            ofs << GlobalC::ucell.symm.kgmatrix[isym].e11 << " " << GlobalC::ucell.symm.kgmatrix[isym].e12 << " " << GlobalC::ucell.symm.kgmatrix[isym].e13 << std::endl;
-                            ofs << GlobalC::ucell.symm.kgmatrix[isym].e21 << " " << GlobalC::ucell.symm.kgmatrix[isym].e22 << " " << GlobalC::ucell.symm.kgmatrix[isym].e23 << std::endl;
-                            ofs << GlobalC::ucell.symm.kgmatrix[isym].e31 << " " << GlobalC::ucell.symm.kgmatrix[isym].e32 << " " << GlobalC::ucell.symm.kgmatrix[isym].e33 << std::endl;
+                            ofs << ucell.symm.kgmatrix[isym].e11 << " " << ucell.symm.kgmatrix[isym].e12 << " " << ucell.symm.kgmatrix[isym].e13 << std::endl;
+                            ofs << ucell.symm.kgmatrix[isym].e21 << " " << ucell.symm.kgmatrix[isym].e22 << " " << ucell.symm.kgmatrix[isym].e23 << std::endl;
+                            ofs << ucell.symm.kgmatrix[isym].e31 << " " << ucell.symm.kgmatrix[isym].e32 << " " << ucell.symm.kgmatrix[isym].e33 << std::endl;
                             ofs << "euler_angle/pi: " << euler_angles_test[isym].x / ModuleBase::PI << " "
                                 << euler_angles_test[isym].y / ModuleBase::PI << " " << euler_angles_test[isym].z / ModuleBase::PI << std::endl;
                             for (int l = 0;l <= lmax;++l)
@@ -447,7 +445,9 @@ namespace ModuleSymmetry
         return DMk;
     }
 
-    std::vector<TC> Symmetry_rotation::get_Rs_from_adjacent_list(const UnitCell& ucell, Grid_Driver& gd, const Parallel_Orbitals& pv) const
+    std::vector<TC> Symmetry_rotation::get_Rs_from_adjacent_list(const UnitCell& ucell,
+                                                                 const Grid_Driver& gd,
+                                                                 const Parallel_Orbitals& pv) const
     {
         // find the union set of Rs for all the atom pairs
         std::set<TC> Rs_set;

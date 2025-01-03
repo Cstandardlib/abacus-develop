@@ -34,7 +34,6 @@
 #include "module_io/berryphase.h"
 #include "module_io/numerical_basis.h"
 #include "module_io/numerical_descriptor.h"
-#include "module_io/rho_io.h"
 #include "module_io/to_wannier90_pw.h"
 #include "module_io/winput.h"
 #include "module_io/write_elecstat_pot.h"
@@ -49,29 +48,30 @@
 
 namespace ModuleESolver {
 
-
 template <typename T, typename Device>
-void ESolver_KS_PW<T, Device>::others(const int istep) {
+void ESolver_KS_PW<T, Device>::others(UnitCell& ucell, const int istep)
+{
     ModuleBase::TITLE("ESolver_KS_PW", "others");
 
     const std::string cal_type = PARAM.inp.calculation;
 
     if (cal_type == "test_memory") {
-        Cal_Test::test_memory(this->pw_rho,
+        Cal_Test::test_memory(ucell.nat,
+                              ucell.ntype,
+                              ucell.GGT,
+                              this->pw_rho,
                               this->pw_wfc,
                               this->p_chgmix->get_mixing_mode(),
                               this->p_chgmix->get_mixing_ndim());
     } else if (cal_type == "gen_bessel") {
         Numerical_Descriptor nc;
-        nc.output_descriptor(this->psi[0],
+        nc.output_descriptor(ucell,
+                             this->psi[0],
                              PARAM.inp.bessel_descriptor_lmax,
                              PARAM.inp.bessel_descriptor_rcut,
                              PARAM.inp.bessel_descriptor_tolerence,
                              this->kv.get_nks());
-        ModuleBase::GlobalFunc::DONE(GlobalV::ofs_running,
-                                     "GENERATE DESCRIPTOR FOR DEEPKS");
-    } else if (cal_type == "nscf") {
-        this->nscf();
+        ModuleBase::GlobalFunc::DONE(GlobalV::ofs_running, "GENERATE DESCRIPTOR FOR DEEPKS");
     } else {
         ModuleBase::WARNING_QUIT("ESolver_KS_PW::others",
                                  "CALCULATION type not supported");

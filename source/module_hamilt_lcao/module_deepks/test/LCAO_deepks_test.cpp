@@ -1,10 +1,13 @@
 #include "LCAO_deepks_test.h"
 #define private public
 #include "module_parameter/parameter.h"
+
+#include <torch/script.h>
+#include <torch/torch.h>
 #undef private
 namespace Test_Deepks
 {
-Grid_Driver GridD(PARAM.input.test_deconstructor, PARAM.input.test_grid);
+const Grid_Driver GridD(PARAM.input.test_deconstructor, PARAM.input.test_grid);
 }
 
 test_deepks::test_deepks()
@@ -21,7 +24,7 @@ void test_deepks::check_dstable()
     // this->compare_with_ref("S_I_mu_alpha.dat","S_I_mu_alpha_ref.dat");
 }
 
-void test_deepks::check_psialpha()
+void test_deepks::check_phialpha()
 {
     std::vector<int> na;
     na.resize(ucell.ntype);
@@ -31,14 +34,16 @@ void test_deepks::check_psialpha()
     }
     ld.init(ORB, ucell.nat, ucell.ntype, ParaO, na);
 
-    ld.build_psialpha(PARAM.input.cal_force, ucell, ORB, Test_Deepks::GridD, overlap_orb_alpha_);
+    ld.allocate_phialpha(PARAM.input.cal_force, ucell, ORB, Test_Deepks::GridD);
 
-    ld.check_psialpha(PARAM.input.cal_force, ucell, ORB, Test_Deepks::GridD);
+    ld.build_phialpha(PARAM.input.cal_force, ucell, ORB, Test_Deepks::GridD, overlap_orb_alpha_);
 
-    this->compare_with_ref("psialpha.dat", "psialpha_ref.dat");
-    this->compare_with_ref("dpsialpha_x.dat", "dpsialpha_x_ref.dat");
-    this->compare_with_ref("dpsialpha_y.dat", "dpsialpha_y_ref.dat");
-    this->compare_with_ref("dpsialpha_z.dat", "dpsialpha_z_ref.dat");
+    ld.check_phialpha(PARAM.input.cal_force, ucell, ORB, Test_Deepks::GridD);
+
+    this->compare_with_ref("phialpha.dat", "phialpha_ref.dat");
+    this->compare_with_ref("dphialpha_x.dat", "dphialpha_x_ref.dat");
+    this->compare_with_ref("dphialpha_y.dat", "dphialpha_y_ref.dat");
+    this->compare_with_ref("dphialpha_z.dat", "dphialpha_z_ref.dat");
 }
 
 void test_deepks::read_dm()
@@ -115,7 +120,7 @@ void test_deepks::check_pdm()
     {
         this->read_dm_k(kv.get_nkstot());
         this->set_dm_k_new();
-        this->ld.cal_projected_DM_k(dm_k_new, ucell, ORB, Test_Deepks::GridD);
+        this->ld.cal_projected_DM(dm_k_new, ucell, ORB, Test_Deepks::GridD);
     }
     this->ld.check_projected_dm();
     this->compare_with_ref("pdm.dat", "pdm_ref.dat");
@@ -126,11 +131,11 @@ void test_deepks::check_gdmx()
     this->ld.init_gdmx(ucell.nat);
     if (PARAM.sys.gamma_only_local)
     {
-        this->ld.cal_gdmx(dm_new[0], ucell, ORB, Test_Deepks::GridD, 0);
+        this->ld.cal_gdmx(dm_new, ucell, ORB, Test_Deepks::GridD, kv.get_nkstot(), kv.kvec_d, this->ld.phialpha, 0);
     }
     else
     {
-        this->ld.cal_gdmx_k(dm_k_new, ucell, ORB, Test_Deepks::GridD, kv.get_nkstot(), kv.kvec_d, 0);
+        this->ld.cal_gdmx(dm_k_new, ucell, ORB, Test_Deepks::GridD, kv.get_nkstot(), kv.kvec_d, this->ld.phialpha, 0);
     }
     this->ld.check_gdmx(ucell.nat);
 
@@ -168,7 +173,9 @@ void test_deepks::check_descriptor()
 
 void test_deepks::check_gvx()
 {
-    this->ld.cal_gvx(ucell.nat);
+    std::vector<torch::Tensor> gevdm;
+    this->ld.cal_gevdm(ucell.nat, gevdm);
+    this->ld.cal_gvx(ucell.nat, gevdm);
     this->ld.check_gvx(ucell.nat);
 
     for (int ia = 0; ia < ucell.nat; ia++)
@@ -200,7 +207,7 @@ void test_deepks::check_edelta()
     this->ld.load_model("model.ptg");
     if (PARAM.sys.gamma_only_local)
     {
-        this->ld.allocate_V_delta(ucell.nat);
+        this->ld.allocate_V_delta(ucell.nat, 1); // 1 for gamma-only
     }
     else
     {
@@ -221,12 +228,12 @@ void test_deepks::check_e_deltabands()
 {
     if (PARAM.sys.gamma_only_local)
     {
-        this->ld.cal_e_delta_band(dm_new);
+        this->ld.cal_e_delta_band(dm_new, 1); // 1 for gamma-only
     }
     else
     {
         this->folding_nnr(kv);
-        this->ld.cal_e_delta_band_k(dm_k_new, kv.get_nkstot());
+        this->ld.cal_e_delta_band(dm_k_new, kv.get_nkstot());
     }
 
     std::ofstream ofs("E_delta_bands.dat");
@@ -239,13 +246,16 @@ void test_deepks::check_f_delta()
 {
     ModuleBase::matrix svnl_dalpha;
     svnl_dalpha.create(3, 3);
+    const int cal_stress = 1;
     if (PARAM.sys.gamma_only_local)
     {
-        ld.cal_f_delta_gamma(dm_new, ucell, ORB, Test_Deepks::GridD, 1, svnl_dalpha);
+        const int nks = 1;
+        ld.cal_f_delta(dm_new, ucell, ORB, Test_Deepks::GridD, nks, kv.kvec_d, cal_stress, svnl_dalpha);
     }
     else
     {
-        ld.cal_f_delta_k(dm_k_new, ucell, ORB, Test_Deepks::GridD, kv.get_nkstot(), kv.kvec_d, 1, svnl_dalpha);
+        const int nks = kv.get_nkstot();
+        ld.cal_f_delta(dm_k_new, ucell, ORB, Test_Deepks::GridD, nks, kv.kvec_d, cal_stress, svnl_dalpha);
     }
     ld.check_f_delta(ucell.nat, svnl_dalpha);
 

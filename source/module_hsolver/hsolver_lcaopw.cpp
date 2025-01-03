@@ -7,8 +7,7 @@
 #include "module_elecstate/elecstate_pw.h"
 #include "module_hamilt_pw/hamilt_pwdft/global.h"
 #include "module_hamilt_pw/hamilt_pwdft/hamilt_pw.h"
-#include "module_hamilt_pw/hamilt_pwdft/wavefunc.h"
-#include "module_hsolver/diagh.h"
+#include "module_psi/wavefunc.h"
 #include "module_hsolver/diago_iter_assist.h"
 #include "module_parameter/parameter.h"
 
@@ -25,7 +24,7 @@ namespace hsolver
 
 #ifdef USE_PAW
 template <typename T>
-void HSolverLIP<T>::paw_func_in_kloop(const int ik)
+void HSolverLIP<T>::paw_func_in_kloop(const int ik,const double tpiba)
 {
     if (PARAM.inp.use_paw)
     {
@@ -65,7 +64,7 @@ void HSolverLIP<T>::paw_func_in_kloop(const int ik)
                                     this->wfc_basis->get_ig2iy(ik).data(),
                                     this->wfc_basis->get_ig2iz(ik).data(),
                                     (const double**)kpg,
-                                    GlobalC::ucell.tpiba,
+                                    tpiba,
                                     (const double**)gcar);
 
         std::vector<double>().swap(kpt);
@@ -84,7 +83,10 @@ void HSolverLIP<T>::paw_func_in_kloop(const int ik)
 }
 
 template <typename T>
-void HSolverLIP<T>::paw_func_after_kloop(psi::Psi<T>& psi, elecstate::ElecState* pes)
+void HSolverLIP<T>::paw_func_after_kloop(psi::Psi<T>& psi, 
+                                         elecstate::ElecState* pes,
+                                         const double tpiba,
+                                         const int nat)
 {
     if (PARAM.inp.use_paw)
     {
@@ -132,7 +134,7 @@ void HSolverLIP<T>::paw_func_after_kloop(psi::Psi<T>& psi, elecstate::ElecState*
                                         this->wfc_basis->get_ig2iy(ik).data(),
                                         this->wfc_basis->get_ig2iz(ik).data(),
                                         (const double**)kpg,
-                                        GlobalC::ucell.tpiba,
+                                        tpiba,
                                         (const double**)gcar);
 
             std::vector<double>().swap(kpt);
@@ -165,7 +167,7 @@ void HSolverLIP<T>::paw_func_after_kloop(psi::Psi<T>& psi, elecstate::ElecState*
         {
             GlobalC::paw_cell.get_rhoijp(rhoijp, rhoijselect, nrhoijsel);
 
-            for (int iat = 0; iat < GlobalC::ucell.nat; iat++)
+            for (int iat = 0; iat < nat; iat++)
             {
                 GlobalC::paw_cell.set_rhoij(iat,
                                             nrhoijsel[iat],
@@ -177,7 +179,7 @@ void HSolverLIP<T>::paw_func_after_kloop(psi::Psi<T>& psi, elecstate::ElecState*
 #else
         GlobalC::paw_cell.get_rhoijp(rhoijp, rhoijselect, nrhoijsel);
 
-        for (int iat = 0; iat < GlobalC::ucell.nat; iat++)
+        for (int iat = 0; iat < nat; iat++)
         {
             GlobalC::paw_cell.set_rhoij(iat,
                                         nrhoijsel[iat],
@@ -202,7 +204,9 @@ void HSolverLIP<T>::solve(hamilt::Hamilt<T>* pHamilt, // ESolver_KS_PW::p_hamilt
                           psi::Psi<T>& psi,           // ESolver_KS_PW::kspw_psi
                           elecstate::ElecState* pes,  // ESolver_KS_PW::pes
                           psi::Psi<T>& transform,
-                          const bool skip_charge)
+                          const bool skip_charge,
+                          const double tpiba,
+                          const int nat)
 {
     ModuleBase::TITLE("HSolverLIP", "solve");
     ModuleBase::timer::tick("HSolverLIP", "solve");
@@ -213,7 +217,7 @@ void HSolverLIP<T>::solve(hamilt::Hamilt<T>* pHamilt, // ESolver_KS_PW::p_hamilt
         pHamilt->updateHk(ik);
 
 #ifdef USE_PAW
-        this->paw_func_in_kloop(ik);
+        this->paw_func_in_kloop(ik,tpiba);
 #endif
 
         psi.fix_k(ik);
@@ -273,15 +277,21 @@ void HSolverLIP<T>::solve(hamilt::Hamilt<T>* pHamilt, // ESolver_KS_PW::p_hamilt
         eigenvalues.data(),
         pes->ekb.nr * pes->ekb.nc);
 
+    reinterpret_cast<elecstate::ElecStatePW<T>*>(pes)->calculate_weights();
+    reinterpret_cast<elecstate::ElecStatePW<T>*>(pes)->calEBand();
     if (skip_charge)
     {
+        if (PARAM.globalv.use_uspp)
+        {
+            reinterpret_cast<elecstate::ElecStatePW<T>*>(pes)->cal_becsum(psi);
+        }
         ModuleBase::timer::tick("HSolverLIP", "solve");
         return;
     }
     reinterpret_cast<elecstate::ElecStatePW<T>*>(pes)->psiToRho(psi);
 
 #ifdef USE_PAW
-    this->paw_func_after_kloop(psi, pes);
+    this->paw_func_after_kloop(psi, pes,tpiba,nat);
 #endif
 
     ModuleBase::timer::tick("HSolverLIP", "solve");

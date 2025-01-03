@@ -84,21 +84,23 @@ namespace ModuleIO
     /// including terms: local/semi-local XC and EXX
     template <typename FPTYPE>
     void write_Vxc(int nspin,
-        int naos,
-        int drank,
-        const psi::Psi<std::complex<FPTYPE>>& psi_pw,
-        // const psi::Psi<T>& psi_lcao,
-        const UnitCell& ucell,
-        Structure_Factor& sf,
-        const ModulePW::PW_Basis_K& wfc_basis,
-        const ModulePW::PW_Basis& rho_basis,
-        const ModulePW::PW_Basis& rhod_basis,
-        const ModuleBase::matrix& vloc,
-        const Charge& chg,
-        const K_Vectors& kv,
-        const ModuleBase::matrix& wg
+                   int naos,
+                   int drank,
+                   const psi::Psi<std::complex<FPTYPE>>& psi_pw,
+                   // const psi::Psi<T>& psi_lcao,
+                   const UnitCell& ucell,
+                   Structure_Factor& sf,
+                   surchem& solvent,
+                   const ModulePW::PW_Basis_K& wfc_basis,
+                   const ModulePW::PW_Basis& rho_basis,
+                   const ModulePW::PW_Basis& rhod_basis,
+                   const ModuleBase::matrix& vloc,
+                   const Charge& chg,
+                   const K_Vectors& kv,
+                   const ModuleBase::matrix& wg
 #ifdef __EXX
-        , const Exx_Lip<std::complex<FPTYPE>>& exx_lip
+                   ,
+                   const Exx_Lip<std::complex<FPTYPE>>& exx_lip
 #endif
     )
     {
@@ -111,7 +113,8 @@ namespace ModuleIO
         double vtxc = 0.0;
         // elecstate::PotXC* potxc(&rho_basis, &etxc, vtxc, nullptr);
         // potxc.cal_v_eff(&chg, &ucell, vr_xc);
-        elecstate::Potential* potxc = new elecstate::Potential(&rhod_basis, &rho_basis, &ucell, &vloc, &sf, &etxc, &vtxc);
+        elecstate::Potential* potxc
+            = new elecstate::Potential(&rhod_basis, &rho_basis, &ucell, &vloc, &sf, &solvent, &etxc, &vtxc);
         std::vector<std::string> compnents_list = { "xc" };
 
         potxc->pot_register(compnents_list);
@@ -197,7 +200,7 @@ namespace ModuleIO
         // for (int ir = 0;ir < potxc->get_veff_smooth().nc;++ir)
         //     exc_by_rho += potxc->get_veff_smooth()(0, ir) * chg.rho[0][ir];
         // Parallel_Reduce::reduce_all(exc_by_rho);
-        // exc_by_rho *= ((FPTYPE)GlobalC::ucell.omega * (FPTYPE)GlobalV::NPROC / (FPTYPE)potxc->get_veff_smooth().nc);
+        // exc_by_rho *= ((FPTYPE)ucell.omega * (FPTYPE)GlobalV::NPROC / (FPTYPE)potxc->get_veff_smooth().nc);
         // std::cout << "xc all-bands energy by rho =" << exc_by_rho << std::endl;
         //===== test total xc energy =======
         //===== test total exx energy =======

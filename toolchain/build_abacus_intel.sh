@@ -36,7 +36,7 @@ RAPIDJSON=$INSTALL_DIR/rapidjson-1.1.0/
 # if use deepks and deepmd
 cmake -B $BUILD_DIR -DCMAKE_INSTALL_PREFIX=$PREFIX \
         -DCMAKE_CXX_COMPILER=icpx \
-        -DMPI_CXX_COMPILER=mpiicpc \
+        -DMPI_CXX_COMPILER=mpiicpx \
         -DMKLROOT=$MKLROOT \
         -DELPA_DIR=$ELPA \
         -DCEREAL_INCLUDE_DIR=$CEREAL \
@@ -46,7 +46,7 @@ cmake -B $BUILD_DIR -DCMAKE_INSTALL_PREFIX=$PREFIX \
         -DUSE_OPENMP=ON \
         -DUSE_ELPA=ON \
         -DENABLE_RAPIDJSON=ON \
-        -DRapdidJSON_DIR=$RAPIDJSON \
+        -DRapidJSON_DIR=$RAPIDJSON \
 #         -DENABLE_DEEPKS=1 \
 #         -DTorch_DIR=$LIBTORCH \
 #         -Dlibnpy_INCLUDE_DIR=$LIBNPY \
@@ -60,7 +60,7 @@ cmake -B $BUILD_DIR -DCMAKE_INSTALL_PREFIX=$PREFIX \
 cmake --build $BUILD_DIR -j `nproc` 
 cmake --install $BUILD_DIR 2>/dev/null
 
-# if one want's to include deepmd, your gcc version should be >= 11.3.0
+# if one want's to include deepmd, your system gcc version should be >= 11.3.0 for glibc requirements
 
 # generate abacus_env.sh
 cat << EOF > "${TOOL}/abacus_env.sh"
@@ -74,6 +74,6 @@ cat << EOF
 ========================== usage =========================
 Done!
 To use the installed ABACUS version
-You need to source $(pwd)/abacus_env.sh first !
+You need to source ${TOOL}/abacus_env.sh first !
 """
 EOF

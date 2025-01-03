@@ -25,12 +25,17 @@ ecutwfc             20
 scf_thr                 1e-6
 scf_nmax               100
 
+cal_force           1
+cal_stress          1
+
 #cal_stress             1
 #noncolin           1
 lspinorb            1
 
 basis_type          pw
-ks_solver           dav
+ks_solver           dav_subspace
+diago_smooth_ethr true
+pw_diag_ndim        2
 chg_extrap       second-order
 out_dm              0
 pw_diag_thr                0.00001

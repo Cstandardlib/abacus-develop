@@ -39,6 +39,8 @@ option(ENABLE_RAPIDJSON "Enable rapid-json usage." OFF)
 option(ENABLE_CNPY "Enable cnpy usage." OFF)
 option(ENABLE_PEXSI "Enable support for PEXSI." OFF)
 option(ENABLE_CUSOLVERMP "Enable cusolvermp." OFF)
+option(USE_DSP "Enable DSP usage." OFF)
+option(USE_CUDA_ON_DCU "Enable CUDA on DCU" OFF)
 
 # enable json support
 if(ENABLE_RAPIDJSON)
@@ -117,6 +119,16 @@ elseif(NOT ENABLE_LCAO AND NOT ENABLE_MPI)
   set(ABACUS_BIN_NAME abacus_pw_serial)
 elseif(ENABLE_LCAO AND NOT ENABLE_MPI)
   set(ABACUS_BIN_NAME abacus_serial)
+endif()
+
+if (USE_DSP)
+  set(USE_ELPA OFF)
+  set(ENABLE_LCAO OFF)
+  set(ABACUS_BIN_NAME abacus_dsp)
+endif()
+
+if (USE_CUDA_ON_DCU)
+  add_compile_definitions(__CUDA_ON_DCU)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -238,6 +250,11 @@ if(ENABLE_MPI)
   target_link_libraries(${ABACUS_BIN_NAME} MPI::MPI_CXX)
   add_compile_definitions(__MPI)
   list(APPEND math_libs MPI::MPI_CXX)
+endif()
+
+if (USE_DSP)
+  target_link_libraries(${ABACUS_BIN_NAME} ${DIR_MTBLAS_LIBRARY})
+  add_compile_definitions(__DSP)
 endif()
 
 find_package(Threads REQUIRED)
@@ -409,10 +426,8 @@ else()
   include_directories(${FFTW3_INCLUDE_DIRS})
   list(APPEND math_libs FFTW3::FFTW3 LAPACK::LAPACK BLAS::BLAS)
 
-  if(ENABLE_LCAO)
-    find_package(ScaLAPACK REQUIRED)
-    list(APPEND math_libs ScaLAPACK::ScaLAPACK)
-  endif()
+  find_package(ScaLAPACK REQUIRED)
+  list(APPEND math_libs ScaLAPACK::ScaLAPACK)
 
   if(USE_OPENMP)
     list(APPEND math_libs FFTW3::FFTW3_OMP)
@@ -526,13 +541,10 @@ endif()
 if(ENABLE_LIBRI)
   set_if_higher(CMAKE_CXX_STANDARD 14)
   if(LIBRI_DIR)
-    include_directories(${LIBRI_DIR}/include)
-  elseif(GIT_SUBMODULE)
-    git_submodule_update()
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/LibRI/include)
   else()
-    message(FATAL_ERROR "Must provide LIBRI_DIR for RI related features.")
+    find_package(LibRI REQUIRED)
   endif()
+  include_directories(${LIBRI_DIR}/include)
   target_link_libraries(${ABACUS_BIN_NAME} ri module_exx_symmetry)
   add_compile_definitions(__EXX EXX_DM=3 EXX_H_COMM=2 TEST_EXX_LCAO=0
                           TEST_EXX_RADIAL=1)
@@ -543,13 +555,10 @@ if(ENABLE_LIBRI OR DEFINED LIBCOMM_DIR)
 endif()
 if(ENABLE_LIBCOMM)
   if(LIBCOMM_DIR)
-    include_directories(${LIBCOMM_DIR}/include)
-  elseif(GIT_SUBMODULE)
-    git_submodule_update()
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/LibComm/include)
   else()
-    message(FATAL_ERROR "Must provide LIBCOMM_DIR for RI related features.")
+    find_package(LibComm REQUIRED)
   endif()
+  include_directories(${LIBCOMM_DIR}/include)
 endif()
 
 if(ENABLE_PAW)
@@ -703,10 +712,13 @@ target_link_libraries(
   hamilt_stodft
   psi
   psi_initializer
+  psi_overall_init
   esolver
   vdw
   device
-  container)
+  container
+  dftu
+  deltaspin)
 if(ENABLE_LCAO)
   target_link_libraries(
     ${ABACUS_BIN_NAME}
@@ -714,11 +726,10 @@ if(ENABLE_LCAO)
     tddft
     orb
     gint
-    dftu
     hcontainer
-    deltaspin
     numerical_atomic_orbitals
-    lr)
+    lr
+    rdmft)
   if(USE_ELPA)
     target_link_libraries(${ABACUS_BIN_NAME} genelpa)
   endif()
