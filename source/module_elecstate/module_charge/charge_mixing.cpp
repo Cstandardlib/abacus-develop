@@ -144,7 +144,7 @@ void Charge_Mixing::init_mixing()
     }
     
     // initailize tau_mdata
-    if ((XC_Functional::get_func_type() == 3 || XC_Functional::get_func_type() == 5) && mixing_tau)
+    if ((XC_Functional::get_ked_flag()) && mixing_tau)
     {
         if (PARAM.inp.scf_thr_type == 1)
         {
@@ -180,7 +180,7 @@ void Charge_Mixing::mix_reset()
     this->mixing->reset();
     this->rho_mdata.reset();
     // initailize tau_mdata
-    if ((XC_Functional::get_func_type() == 3 || XC_Functional::get_func_type() == 5) && mixing_tau)
+    if ((XC_Functional::get_ked_flag()) && mixing_tau)
     {
         this->tau_mdata.reset();
     }
@@ -193,7 +193,6 @@ void Charge_Mixing::mix_reset()
 bool Charge_Mixing::if_scf_oscillate(const int iteration, const double drho, const int iternum_used, const double threshold)
 {
     ModuleBase::TITLE("Charge_Mixing", "if_scf_oscillate");
-    ModuleBase::timer::tick("Charge_Mixing", "if_scf_oscillate");
 
     if(this->_drho_history.size() == 0)
     {
@@ -241,7 +240,4 @@ bool Charge_Mixing::if_scf_oscillate(const int iteration, const double drho, con
     }
 
     return false;
-
-    ModuleBase::timer::tick("Charge_Mixing", "if_scf_oscillate");
-  
 }

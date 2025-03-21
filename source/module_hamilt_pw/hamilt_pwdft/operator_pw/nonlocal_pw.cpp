@@ -35,8 +35,8 @@ Nonlocal<OperatorPW<T, Device>>::Nonlocal(const int* isk_in,
 
 template<typename T, typename Device>
 Nonlocal<OperatorPW<T, Device>>::~Nonlocal() {
-    delmem_complex_op()(this->ctx, this->ps);
-    delmem_complex_op()(this->ctx, this->becp);
+    delmem_complex_op()(this->ps);
+    delmem_complex_op()(this->becp);
 }
 
 template<typename T, typename Device>
@@ -72,10 +72,10 @@ void Nonlocal<OperatorPW<T, Device>>::add_nonlocal_pp(T *hpsi_in, const T *becp,
     // T *ps = new T[nkb * m];
     // ModuleBase::GlobalFunc::ZEROS(ps, m * nkb);
     if (this->nkb_m < m * nkb) {
-        resmem_complex_op()(this->ctx, this->ps, nkb * m, "Nonlocal<PW>::ps");
+        resmem_complex_op()(this->ps, nkb * m, "Nonlocal<PW>::ps");
         this->nkb_m = m * nkb;
     }
-    setmem_complex_op()(this->ctx, this->ps, 0, nkb * m);
+    setmem_complex_op()(this->ps, 0, nkb * m);
 
     int sum = 0;
     int iat = 0;
@@ -170,7 +170,6 @@ void Nonlocal<OperatorPW<T, Device>>::add_nonlocal_pp(T *hpsi_in, const T *becp,
         // denghui replace 2022-10-20
         // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         gemv_op()(
-            this->ctx,
             transa,
             this->npw,
             this->ppcell->nkb,
@@ -189,7 +188,6 @@ void Nonlocal<OperatorPW<T, Device>>::add_nonlocal_pp(T *hpsi_in, const T *becp,
         //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         // denghui replace 2022-10-20
         gemm_op()(
-            this->ctx,
             transa,
             transb,
             this->npw,
@@ -221,7 +219,7 @@ void Nonlocal<OperatorPW<T, Device>>::act(
     ModuleBase::timer::tick("Operator", "NonlocalPW");
     if(is_first_node)
     {
-        setmem_complex_op()(this->ctx, tmhpsi, 0, nbasis*nbands/npol);
+        setmem_complex_op()(tmhpsi, 0, nbasis*nbands/npol);
     }
     if(!PARAM.inp.use_paw)
     {
@@ -235,7 +233,7 @@ void Nonlocal<OperatorPW<T, Device>>::act(
             // qianrui optimize 2021-3-31
             int nkb = this->ppcell->nkb;
             if (this->nkb_m < nbands * nkb) {
-                resmem_complex_op()(this->ctx, this->becp, nbands * nkb, "Nonlocal<PW>::becp");
+                resmem_complex_op()(this->becp, nbands * nkb, "Nonlocal<PW>::becp");
             }
             // ModuleBase::ComplexMatrix becp(nbands, nkb, false);
             char transa = 'C';
@@ -246,7 +244,6 @@ void Nonlocal<OperatorPW<T, Device>>::act(
                 // denghui replace 2022-10-20
                 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                 gemv_op()(
-                    this->ctx,
                     transa,
                     this->npw,
                     nkb,
@@ -265,7 +262,6 @@ void Nonlocal<OperatorPW<T, Device>>::act(
                 //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                 // denghui replace 2022-10-20
                 gemm_op()(
-                    this->ctx,
                     transa,
                     transb,
                     nkb,

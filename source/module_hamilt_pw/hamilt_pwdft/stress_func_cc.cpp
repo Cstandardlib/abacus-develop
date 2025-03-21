@@ -21,8 +21,8 @@ void Stress_Func<FPTYPE, Device>::stress_cc(ModuleBase::matrix& sigma,
 											const bool *numeric,
                                             const Charge* const chr)
 {
-    ModuleBase::TITLE("Stress_Func","stress_cc");
-	ModuleBase::timer::tick("Stress_Func","stress_cc");
+    ModuleBase::TITLE("Stress","stress_cc");
+	ModuleBase::timer::tick("Stress","stress_cc");
         
 	FPTYPE fact=1.0;
 
@@ -45,14 +45,14 @@ void Stress_Func<FPTYPE, Device>::stress_cc(ModuleBase::matrix& sigma,
 
 	if(judge==0) 
 	{
-		ModuleBase::timer::tick("Stress_Func","stress_cc");
+		ModuleBase::timer::tick("Stress","stress_cc");
 		return;
 	}
 
 	//recalculate the exchange-correlation potential
 	ModuleBase::matrix vxc;
-	if(XC_Functional::get_func_type() == 3 || XC_Functional::get_func_type() == 5)
-	{
+    if (XC_Functional::get_ked_flag())
+    {
 #ifdef USE_LIBXC
         const auto etxc_vtxc_v
             = XC_Functional_Libxc::v_xc_meta(XC_Functional::get_func_id(), rho_basis->nrxx, ucell.omega, ucell.tpiba, chr);
@@ -192,7 +192,6 @@ void Stress_Func<FPTYPE, Device>::stress_cc(ModuleBase::matrix& sigma,
 	for(int l = 0;l< 3;l++)
 	{
 		sigma(l,l) += sigmadiag;
-//		sigmacc [l][ l] += sigmadiag.real();
 	}
 	for(int l = 0;l< 3;l++)
 	{
@@ -205,7 +204,7 @@ void Stress_Func<FPTYPE, Device>::stress_cc(ModuleBase::matrix& sigma,
 	delete[] rhocg;
 	delete[] psic;
 
-	ModuleBase::timer::tick("Stress_Func","stress_cc");
+	ModuleBase::timer::tick("Stress","stress_cc");
 	return;
 }
 
@@ -225,17 +224,18 @@ void Stress_Func<FPTYPE, Device>::deriv_drhoc
 	int type
 )
 {
-	int  igl0;
-	double gx = 0, rhocg1 = 0;
-	//double *aux = new double[mesh];
+	int igl0=0;
+	double gx = 0.0;
+    double rhocg1 = 0.0;
 	std::vector<double> aux(mesh);
 	this->device = base_device::get_device_type<Device>(this->ctx);
+
 	// the modulus of g for a given shell
 	// the fourier transform
 	// auxiliary memory for integration
-	//double *gx_arr = new double[rho_basis->ngg];
 	std::vector<double> gx_arr(rho_basis->ngg);
 	double *gx_arr_d = nullptr;
+
 	// counter on radial mesh points
 	// counter on g shells
 	// lower limit for loop on ngl
@@ -243,7 +243,8 @@ void Stress_Func<FPTYPE, Device>::deriv_drhoc
 	//
 	// G=0 term
 	//
-	if(type == 0){
+	if(type == 0)
+	{
 		if (rho_basis->gg_uniq[0] < 1.0e-8)
 		{
 			drhocg [0] = 0.0;
@@ -253,7 +254,9 @@ void Stress_Func<FPTYPE, Device>::deriv_drhoc
 		{
 			igl0 = 0;
 		}
-	} else {
+	} 
+	else 
+	{
 		if (rho_basis->gg_uniq[0] < 1.0e-8)
 		{
 			for (int ir = 0;ir < mesh; ir++)
@@ -273,7 +276,7 @@ void Stress_Func<FPTYPE, Device>::deriv_drhoc
 
 	//
 	// G <> 0 term
-	//]
+	//
 
 #ifdef _OPENMP
 #pragma omp parallel for
@@ -288,36 +291,42 @@ void Stress_Func<FPTYPE, Device>::deriv_drhoc
 	double *rab_d = nullptr;
 	double *aux_d = nullptr;
 	double *drhocg_d = nullptr;
-	if(this->device == base_device::GpuDevice ) {
-		resmem_var_op()(this->ctx, r_d, mesh);
-		resmem_var_op()(this->ctx, rhoc_d, mesh);
-		resmem_var_op()(this->ctx, rab_d, mesh);
 
-		resmem_var_op()(this->ctx, aux_d, mesh);
-		resmem_var_op()(this->ctx, gx_arr_d, rho_basis->ngg);
-		resmem_var_op()(this->ctx, drhocg_d, rho_basis->ngg);
+	if(this->device == base_device::GpuDevice) 
+	{
+		resmem_var_op()(r_d, mesh);
+		resmem_var_op()(rhoc_d, mesh);
+		resmem_var_op()(rab_d, mesh);
 
-		syncmem_var_h2d_op()(this->ctx, this->cpu_ctx, gx_arr_d, gx_arr.data(), rho_basis->ngg);
-		syncmem_var_h2d_op()(this->ctx, this->cpu_ctx, r_d, r, mesh);
-		syncmem_var_h2d_op()(this->ctx, this->cpu_ctx, rab_d, rab, mesh);
-		syncmem_var_h2d_op()(this->ctx, this->cpu_ctx, rhoc_d, rhoc, mesh);
+		resmem_var_op()(aux_d, mesh);
+		resmem_var_op()(gx_arr_d, rho_basis->ngg);
+		resmem_var_op()(drhocg_d, rho_basis->ngg);
+
+		syncmem_var_h2d_op()(gx_arr_d, gx_arr.data(), rho_basis->ngg);
+		syncmem_var_h2d_op()(r_d, r, mesh);
+		syncmem_var_h2d_op()(rab_d, rab, mesh);
+		syncmem_var_h2d_op()(rhoc_d, rhoc, mesh);
 	}
 
-	if(this->device == base_device::GpuDevice) {
+	if(this->device == base_device::GpuDevice) 
+	{
 		hamilt::cal_stress_drhoc_aux_op<FPTYPE, Device>()(
-			r_d,rhoc_d,gx_arr_d+igl0,rab_d,drhocg_d+igl0,mesh,igl0,rho_basis->ngg-igl0,omega,type);
-		syncmem_var_d2h_op()(this->cpu_ctx, this->ctx, drhocg+igl0, drhocg_d+igl0, rho_basis->ngg-igl0);	
+				r_d,rhoc_d,gx_arr_d+igl0,rab_d,drhocg_d+igl0,mesh,igl0,rho_basis->ngg-igl0,omega,type);
+		syncmem_var_d2h_op()(drhocg+igl0, drhocg_d+igl0, rho_basis->ngg-igl0);	
 
-	} else {
+	} 
+	else 
+	{
 		hamilt::cal_stress_drhoc_aux_op<FPTYPE, Device>()(
-			r,rhoc,gx_arr.data()+igl0,rab,drhocg+igl0,mesh,igl0,rho_basis->ngg-igl0,omega,type);
+				r,rhoc,gx_arr.data()+igl0,rab,drhocg+igl0,mesh,igl0,rho_basis->ngg-igl0,omega,type);
 
 	}
-    delmem_var_op()(this->ctx, r_d);
-    delmem_var_op()(this->ctx, rhoc_d);
-    delmem_var_op()(this->ctx, rab_d);
-    delmem_var_op()(this->ctx, gx_arr_d);
-    delmem_var_op()(this->ctx, drhocg_d);
+	delmem_var_op()(r_d);
+    delmem_var_op()(rhoc_d);
+    delmem_var_op()(rab_d);
+    delmem_var_op()(gx_arr_d);
+    delmem_var_op()(drhocg_d);
+
 	return;
 }
 

@@ -1,6 +1,5 @@
 #pragma once
 #include "module_elecstate/elecstate_pw.h"
-#include "module_psi/wavefunc.h"
 
 namespace elecstate
 {
@@ -12,35 +11,13 @@ const double* ElecState::getRho(int spin) const
     return &(this->charge->rho[spin][0]);
 }
 
-void ElecState::fixed_weights(const std::vector<double>& ocp_kb, const int& nbands, const double& nelec)
-{
-    return;
-}
 
 void ElecState::init_nelec_spin()
 {
     return;
 }
 
-void ElecState::calculate_weights()
-{
-    return;
-}
 
-void ElecState::calEBand()
-{
-    return;
-}
-
-void ElecState::print_band(const int& ik, const int& printe, const int& iter)
-{
-    return;
-}
-
-void ElecState::print_eigenvalue(std::ofstream& ofs)
-{
-    return;
-}
 
 void ElecState::init_scf(const int istep,
                          const UnitCell& ucell,
@@ -147,21 +124,3 @@ void Stochastic_WF<T, Device>::init(K_Vectors* p_kv, const int npwx_in)
 }
 
 #include "module_cell/klist.h"
-K_Vectors::K_Vectors()
-{
-}
-K_Vectors::~K_Vectors()
-{
-}
-wavefunc::wavefunc()
-{
-}
-wavefunc::~wavefunc()
-{
-}
-WF_atomic::WF_atomic()
-{
-}
-WF_atomic::~WF_atomic()
-{
-}

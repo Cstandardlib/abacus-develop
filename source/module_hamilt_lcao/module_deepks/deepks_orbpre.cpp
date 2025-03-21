@@ -1,7 +1,7 @@
 #ifdef __DEEPKS
 
 /// cal_orbital_precalc : orbital_precalc is used for training with orbital label,
-///                       which equals gvdm * orbital_pdm,
+///                       which equals gevdm * orbital_pdm,
 ///                       orbital_pdm[nks,Inl,nm,nm] = dm_hl * overlap * overlap
 
 #include "deepks_orbpre.h"
@@ -14,7 +14,7 @@
 #include "module_hamilt_lcao/module_hcontainer/atom_pair.h"
 #include "module_parameter/parameter.h"
 
-// calculates orbital_precalc[nks,NAt,NDscrpt] = gvdm * orbital_pdm;
+// calculates orbital_precalc[nks,NAt,NDscrpt] = gevdm * orbital_pdm;
 // orbital_pdm[nks,Inl,nm,nm] = dm_hl * overlap * overlap;
 template <typename TK, typename TH>
 void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
@@ -22,7 +22,7 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
                                         const int inlmax,
                                         const int nat,
                                         const int nks,
-                                        const int* inl_l,
+                                        const std::vector<int>& inl2l,
                                         const std::vector<ModuleBase::Vector3<double>>& kvec_d,
                                         const std::vector<hamilt::HContainer<double>*> phialpha,
                                         const std::vector<torch::Tensor> gevdm,
@@ -40,6 +40,7 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
 
     torch::Tensor orbital_pdm
         = torch::zeros({nks, inlmax, (2 * lmaxd + 1), (2 * lmaxd + 1)}, torch::dtype(torch::kFloat64));
+    auto accessor = orbital_pdm.accessor<double, 4>();
 
     for (int T0 = 0; T0 < ucell.ntype; T0++)
     {
@@ -93,12 +94,9 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
 
                 ModuleBase::Vector3<int> dR1(GridD.getBox(ad1).x, GridD.getBox(ad1).y, GridD.getBox(ad1).z);
 
-                if constexpr (std::is_same<TK, std::complex<double>>::value)
+                if (phialpha[0]->find_matrix(iat, ibt1, dR1.x, dR1.y, dR1.z) == nullptr)
                 {
-                    if (phialpha[0]->find_matrix(iat, ibt1, dR1.x, dR1.y, dR1.z) == nullptr)
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 auto row_indexes = pv.get_indexes_row(ibt1);
@@ -149,12 +147,9 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
 
                     ModuleBase::Vector3<int> dR2(GridD.getBox(ad2).x, GridD.getBox(ad2).y, GridD.getBox(ad2).z);
 
-                    if constexpr (std::is_same<TK, std::complex<double>>::value)
+                    if (phialpha[0]->find_matrix(iat, ibt2, dR2.x, dR2.y, dR2.z) == nullptr)
                     {
-                        if (phialpha[0]->find_matrix(iat, ibt2, dR2.x, dR2.y, dR2.z) == nullptr)
-                        {
-                            continue;
-                        }
+                        continue;
                     }
 
                     auto col_indexes = pv.get_indexes_col(ibt2);
@@ -275,11 +270,11 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
                             {
                                 for (int m2 = 0; m2 < nm; ++m2) // m1 = 1 for s, 3 for p, 5 for d
                                 {
-                                    orbital_pdm[ik][inl][m1][m2] += ddot_(&row_size,
-                                                                          p_g1dmt + index * row_size * nks,
-                                                                          &inc,
-                                                                          s_1t.data() + index * row_size,
-                                                                          &inc);
+                                    accessor[ik][inl][m1][m2] += ddot_(&row_size,
+                                                                       p_g1dmt + index * row_size * nks,
+                                                                       &inc,
+                                                                       s_1t.data() + index * row_size,
+                                                                       &inc);
                                     index++;
                                 }
                             }
@@ -291,14 +286,8 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
         }
     }
 #ifdef __MPI
-    for (int iks = 0; iks < nks; iks++)
-    {
-        for (int inl = 0; inl < inlmax; inl++)
-        {
-            auto tensor_slice = orbital_pdm[iks][inl];
-            Parallel_Reduce::reduce_all(tensor_slice.data_ptr<double>(), (2 * lmaxd + 1) * (2 * lmaxd + 1));
-        }
-    }
+    const int size = nks * inlmax * (2 * lmaxd + 1) * (2 * lmaxd + 1);
+    Parallel_Reduce::reduce_all(orbital_pdm.data_ptr<double>(), size);
 #endif
 
     // transfer orbital_pdm [nks,inl,nm,nm] to orbital_pdm_vector [nl,[nks,nat,nm,nm]]
@@ -314,14 +303,14 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
             for (int iat = 0; iat < nat; ++iat)
             {
                 int inl = iat * nlmax + nl;
-                int nm = 2 * inl_l[inl] + 1;
+                int nm = 2 * inl2l[inl] + 1;
                 std::vector<double> mmv;
 
                 for (int m1 = 0; m1 < nm; ++m1) // m1 = 1 for s, 3 for p, 5 for d
                 {
                     for (int m2 = 0; m2 < nm; ++m2) // m1 = 1 for s, 3 for p, 5 for d
                     {
-                        mmv.push_back(orbital_pdm[iks][inl][m1][m2].item<double>());
+                        mmv.push_back(accessor[iks][inl][m1][m2]);
                     }
                 }
                 torch::Tensor mm
@@ -346,7 +335,7 @@ void DeePKS_domain::cal_orbital_precalc(const std::vector<TH>& dm_hl,
     }
 
     orbital_precalc = torch::cat(orbital_precalc_vector, -1);
-    ModuleBase::timer::tick("LCAO_Deepks", "calc_orbital_precalc");
+    ModuleBase::timer::tick("DeePKS_domain", "calc_orbital_precalc");
     return;
 }
 
@@ -356,7 +345,7 @@ template void DeePKS_domain::cal_orbital_precalc<double, ModuleBase::matrix>(
     const int inlmax,
     const int nat,
     const int nks,
-    const int* inl_l,
+    const std::vector<int>& inl2l,
     const std::vector<ModuleBase::Vector3<double>>& kvec_d,
     const std::vector<hamilt::HContainer<double>*> phialpha,
     const std::vector<torch::Tensor> gevdm,
@@ -373,7 +362,7 @@ template void DeePKS_domain::cal_orbital_precalc<std::complex<double>, ModuleBas
     const int inlmax,
     const int nat,
     const int nks,
-    const int* inl_l,
+    const std::vector<int>& inl2l,
     const std::vector<ModuleBase::Vector3<double>>& kvec_d,
     const std::vector<hamilt::HContainer<double>*> phialpha,
     const std::vector<torch::Tensor> gevdm,

@@ -46,10 +46,14 @@ class Charge
                                    // wenfei 2021-07-28
     const Parallel_Grid* pgrid = nullptr;
   private:
+
     //temporary
-    double *_space_rho = nullptr, *_space_rho_save = nullptr;
-    std::complex<double> *_space_rhog = nullptr, *_space_rhog_save = nullptr;
-    double *_space_kin_r = nullptr, *_space_kin_r_save = nullptr;
+    double *_space_rho = nullptr; 
+    double *_space_rho_save = nullptr;
+    std::complex<double> *_space_rhog = nullptr;
+    std::complex<double> *_space_rhog_save = nullptr;
+    double *_space_kin_r = nullptr;
+    double *_space_kin_r_save = nullptr;
 
   public:
     double **nhat = nullptr; //compensation charge for PAW
@@ -134,7 +138,7 @@ class Charge
 
 	  /**
 	   * @brief 	Reduce among different pools 
-     *          If NPROC_IN_POOLs are all the same, use GlobalV::INTER_POOL
+     *          If NPROC_IN_POOLs are all the same, use GlobalV::KP_WORLD
      *          else, gather rho in a POOL, and then reduce among different POOLs
 	   * 
 	   * @param array_rho f(rho): an array [nrxx]
@@ -161,7 +165,6 @@ class Charge
     bool allocate_rho_final_scf; // LiuXh add 20180606
 #ifdef __MPI
   private:
-    bool use_intel_pool = false; //use INTER_POOL when NPROC_IN_POOLs are all the same
     int *rec = nullptr; //The number of elements each process should receive into the receive buffer.
     int *dis = nullptr; //The displacement (relative to recvbuf) for each process in the receive buffer.
 #endif

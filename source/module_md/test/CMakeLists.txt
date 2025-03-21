@@ -7,7 +7,10 @@ list(APPEND depend_files
   ../../module_cell/unitcell.cpp
   ../../module_cell/update_cell.cpp
   ../../module_cell/bcast_cell.cpp
+  ../../module_cell/print_cell.cpp
   ../../module_cell/atom_spec.cpp
+  ../../module_cell/read_stru.cpp
+  ../../module_cell/read_atom_species.cpp
   ../../module_cell/atom_pseudo.cpp
   ../../module_cell/read_atoms.cpp
   ../../module_cell/pseudo.cpp
@@ -48,7 +51,9 @@ list(APPEND depend_files
   ../../module_base/parallel_global.cpp
   ../../module_base/parallel_comm.cpp
   ../../module_elecstate/read_pseudo.cpp
+  ../../module_elecstate/cal_wfc.cpp
   ../../module_elecstate/cal_nelec_nband.cpp
+  ../../module_elecstate/read_orb.cpp
 )
 
 AddTest(

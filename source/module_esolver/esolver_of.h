@@ -9,6 +9,7 @@
 #include "module_hamilt_pw/hamilt_ofdft/kedf_tf.h"
 #include "module_hamilt_pw/hamilt_ofdft/kedf_vw.h"
 #include "module_hamilt_pw/hamilt_ofdft/kedf_wt.h"
+#include "module_hamilt_pw/hamilt_ofdft/kedf_ml.h"
 #include "module_psi/psi.h"
 
 namespace ModuleESolver
@@ -38,6 +39,9 @@ class ESolver_OF : public ESolver_FP
     KEDF_vW* vw_ = nullptr;
     KEDF_WT* wt_ = nullptr;
     KEDF_LKT* lkt_ = nullptr;
+#ifdef __MLKEDF
+    KEDF_ML* ml_ = nullptr;
+#endif
 
     // ----------------- the optimization methods ------------------
     ModuleBase::Opt_CG* opt_cg_ = nullptr;
@@ -85,8 +89,8 @@ class ESolver_OF : public ESolver_FP
     void update_potential(UnitCell& ucell);
     void optimize(UnitCell& ucell);
     void update_rho();
-    bool check_exit();
-    void after_opt(const int istep, UnitCell& ucell);
+    bool check_exit(bool& conv_esolver);
+    void after_opt(const int istep, UnitCell& ucell, const bool conv_esolver);
 
     // ============================ tools ===============================
     // --------------------- initialize ---------------------------------
@@ -106,7 +110,7 @@ class ESolver_OF : public ESolver_FP
     void test_direction(double* dEdtheta, double** ptemp_phi, UnitCell& ucell);
 
     // --------------------- output the necessary information -----------
-    void print_info();
+    void print_info(const bool conv_esolver);
 
     // --------------------- interface to blas --------------------------
     double inner_product(double* pa, double* pb, int length, double dV = 1)

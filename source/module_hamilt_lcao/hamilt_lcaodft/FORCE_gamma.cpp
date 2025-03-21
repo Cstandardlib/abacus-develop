@@ -25,8 +25,8 @@ void Force_LCAO<double>::allocate(const UnitCell& ucell,
                                   const int& nks,
                                   const std::vector<ModuleBase::Vector3<double>>& kvec_d)
 {
-    ModuleBase::TITLE("Force_LCAO", "allocate");
-    ModuleBase::timer::tick("Force_LCAO", "allocate");
+    ModuleBase::TITLE("Forces", "allocate");
+    ModuleBase::timer::tick("Forces", "allocate");
 
     // need to calculate the derivative in build_ST_new
     bool cal_deri = true;
@@ -36,6 +36,8 @@ void Force_LCAO<double>::allocate(const UnitCell& ucell,
     // liaochen add on 2010/7/12
     // save the results in dense matrix by now.
     // pv.nloc: number of H elements in this proc.
+
+    assert(pv.nloc>0);
     fsr.DSloc_x = new double[pv.nloc];
     fsr.DSloc_y = new double[pv.nloc];
     fsr.DSloc_z = new double[pv.nloc];
@@ -112,10 +114,11 @@ void Force_LCAO<double>::allocate(const UnitCell& ucell,
     if (PARAM.inp.cal_syns)
     {
         cal_deri = false;
+        ModuleBase::timer::tick("Forces", "allocate");
         ModuleBase::WARNING_QUIT("cal_syns", "this function has been broken and will be fixed later.");
     }
 
-    ModuleBase::timer::tick("Force_LCAO", "allocate");
+    ModuleBase::timer::tick("Forces", "allocate");
     return;
 }
 
@@ -147,29 +150,6 @@ void Force_LCAO<double>::finish_ftable(ForceStressArrays& fsr)
     return;
 }
 
-// template <>
-// void Force_LCAO<double>::test(Parallel_Orbitals& pv, double* mm, const std::string& name)
-//{
-//     std::cout << "\n PRINT " << name << std::endl;
-//     std::cout << std::setprecision(6) << std::endl;
-//     for (int i = 0; i < PARAM.globalv.nlocal; i++)
-//     {
-//         for (int j = 0; j < PARAM.globalv.nlocal; j++)
-//         {
-//             if (std::abs(mm[i * PARAM.globalv.nlocal + j]) > 1.0e-5)
-//             {
-//                 std::cout << std::setw(12) << mm[i * PARAM.globalv.nlocal + j];
-//             }
-//             else
-//             {
-//                 std::cout << std::setw(12) << "0";
-//             }
-//         }
-//         std::cout << std::endl;
-//     }
-//     return;
-// }
-
 // be called in force_lo.cpp
 template <>
 void Force_LCAO<double>::ftable(const bool isforce,
@@ -190,6 +170,7 @@ void Force_LCAO<double>::ftable(const bool isforce,
 #ifdef __DEEPKS
                                 ModuleBase::matrix& fvnl_dalpha,
                                 ModuleBase::matrix& svnl_dalpha,
+                                LCAO_Deepks<double>& ld,
 #endif
                                 TGint<double>::type& gint,
                                 const TwoCenterBundle& two_center_bundle,
@@ -198,8 +179,8 @@ void Force_LCAO<double>::ftable(const bool isforce,
                                 const K_Vectors* kv,
                                 Record_adj* ra)
 {
-    ModuleBase::TITLE("Force_LCAO", "ftable");
-    ModuleBase::timer::tick("Force_LCAO", "ftable");
+    ModuleBase::TITLE("Forces", "ftable");
+    ModuleBase::timer::tick("Forces", "ftable");
 
     // get DM
     const elecstate::DensityMatrix<double, double>* dm
@@ -247,27 +228,22 @@ void Force_LCAO<double>::ftable(const bool isforce,
                                    false /*reset dm to gint*/);
 
 #ifdef __DEEPKS
-    const std::vector<std::vector<double>>& dm_gamma = dm->get_DMK_vector();
     if (PARAM.inp.deepks_scf)
     {
-        // when deepks_scf is on, the init pdm should be same as the out pdm, so we should not recalculate the pdm
-        // GlobalC::ld.cal_projected_DM(dm, ucell, orb, gd);
+        const std::vector<std::vector<double>>& dm_gamma = dm->get_DMK_vector();
 
-        GlobalC::ld.cal_descriptor(ucell.nat);
-        GlobalC::ld.cal_gedm(ucell.nat);
-
+        // No need to update E_delta here since it have been done in LCAO_Deepks_Interface in after_scf
         const int nks = 1;
         DeePKS_domain::cal_f_delta<double>(dm_gamma,
                                            ucell,
                                            orb,
                                            gd,
                                            *this->ParaV,
-                                           GlobalC::ld.lmaxd,
                                            nks,
                                            kv->kvec_d,
-                                           GlobalC::ld.phialpha,
-                                           GlobalC::ld.gedm,
-                                           GlobalC::ld.inl_index,
+                                           ld.phialpha,
+                                           ld.gedm,
+                                           ld.inl_index,
                                            fvnl_dalpha,
                                            isstress,
                                            svnl_dalpha);
@@ -296,27 +272,8 @@ void Force_LCAO<double>::ftable(const bool isforce,
     }
 
 #ifdef __DEEPKS
-    // It seems these test should not all be here, should be moved in the future
-    // Also, these test are not in multi-k case now
     if (PARAM.inp.deepks_scf && PARAM.inp.deepks_out_unittest)
     {
-        const int nks = 1; // 1 for gamma-only
-        LCAO_deepks_io::print_dm(nks, PARAM.globalv.nlocal, this->ParaV->nrow, dm_gamma);
-
-        GlobalC::ld.check_projected_dm();
-
-        GlobalC::ld.check_descriptor(ucell, PARAM.globalv.global_out_dir);
-
-        GlobalC::ld.check_gedm();
-
-        GlobalC::ld.cal_e_delta_band(dm_gamma, nks);
-
-        std::ofstream ofs("E_delta_bands.dat");
-        ofs << std::setprecision(10) << GlobalC::ld.e_delta_band;
-
-        std::ofstream ofs1("E_delta.dat");
-        ofs1 << std::setprecision(10) << GlobalC::ld.E_delta;
-
         DeePKS_domain::check_f_delta(ucell.nat, fvnl_dalpha, svnl_dalpha);
     }
 #endif
@@ -325,6 +282,6 @@ void Force_LCAO<double>::ftable(const bool isforce,
     // delete DHloc_fixed_x, DHloc_fixed_y, DHloc_fixed_z
     this->finish_ftable(fsr);
 
-    ModuleBase::timer::tick("Force_LCAO", "ftable");
+    ModuleBase::timer::tick("Forces", "ftable");
     return;
 }
