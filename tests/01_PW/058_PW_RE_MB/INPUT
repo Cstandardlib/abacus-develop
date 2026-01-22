@@ -2,7 +2,6 @@ INPUT_PARAMETERS
 # Directories
 suffix           autotest
 pseudo_dir       ../../PP_ORB
-init_wfc         random
 
 # Relaxation Method
 calculation      relax

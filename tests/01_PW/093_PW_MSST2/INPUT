@@ -2,7 +2,6 @@ INPUT_PARAMETERS
 #Parameters	(General)
 suffix          autotest
 calculation     md
-init_wfc        random
 nbands          8
 pseudo_dir      ../../PP_ORB
 

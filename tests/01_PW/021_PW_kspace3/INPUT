@@ -1,7 +1,6 @@
 INPUT_PARAMETERS
 suffix                  autotest
 calculation             scf
-init_wfc                random
 
 symmetry                1
 ecutwfc                 5

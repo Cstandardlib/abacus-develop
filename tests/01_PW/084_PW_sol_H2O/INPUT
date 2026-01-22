@@ -1,8 +1,7 @@
 INPUT_PARAMETERS
-
+	
 calculation 	scf
 basis_type		pw
-init_wfc        random
 pw_seed         1
 cal_force       1
 nbands			20

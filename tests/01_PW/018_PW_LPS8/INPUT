@@ -2,7 +2,6 @@ INPUT_PARAMETERS
 #Parameters (1.General)
 suffix			autotest
 calculation     scf
-init_wfc        random
 
 nbands			3
 symmetry		1

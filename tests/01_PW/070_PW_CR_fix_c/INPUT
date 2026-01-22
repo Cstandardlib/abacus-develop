@@ -3,8 +3,7 @@ INPUT_PARAMETERS
 suffix              autotest
 pseudo_dir	../../PP_ORB
 pw_seed             1
-init_wfc            random
-
+	
 nbands			    8
 calculation         cell-relax
 symmetry        0

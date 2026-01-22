@@ -2,7 +2,6 @@ INPUT_PARAMETERS
 #Parameters (1.General)
 suffix			autotest
 calculation     scf
-init_wfc        random
 
 nbands			12
 symmetry		1
@@ -22,6 +21,6 @@ smearing_method		gauss
 smearing_sigma			0.002
 
 #Parameters (5.Mixing)
-mixing_type	    broyden
+mixing_type	    broyden 
 mixing_beta		0.7
 
