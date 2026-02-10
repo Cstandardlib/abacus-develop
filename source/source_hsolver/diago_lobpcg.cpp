@@ -128,6 +128,9 @@ bool DiagoLOBPCG<T, Device>::diag(
     const double tolerance,
     const int max_iter)
 {
+#ifdef LOCKING_BY_TRACE
+std::cout << "Using locking by trace." << std::endl;
+#endif
 // #ifdef DEBUG_LOBPCG
 #ifdef DEBUG_SCF
 std::cout << "----- START LOBPCG -----" << std::endl;
@@ -306,8 +309,8 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     // before entering the loop
     // first set convergence parameters and flags:
 
-    tol_rms_ = tolerance;
-    tol_max_ = 10.0 * tolerance;
+    // tol_rms_ = tolerance;
+    // tol_max_ = 10.0 * tolerance;
 
     n_active_ = n_max_;
     // Initialize convergence flags
@@ -419,7 +422,7 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
                 axpy_op(n_dim_, &alpha, space_col, 1, r_col, 1);
             }
             // r_col, n_dim_ - elements vector
-            r_norm_.data<Real>()[i] = nrm2_op(n_dim_, r_col, 1) / std::sqrt(static_cast<double>(n_dim_));
+            r_norm_.data<Real>()[i] = nrm2_op(n_dim_, r_col, 1); // std::sqrt(static_cast<double>(n_dim_));
         }
         // --- 2.5 check convergence and locking ---
 // !!!
@@ -427,10 +430,53 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: check convergence and locking ---" << std::endl;
 #endif
+        // --- 2.5 check convergence and locking ---
+#ifdef LOCKING_BY_TRACE
+        // LOCKING STRATEGY BY TRACE MINIMIZATION
+        for(int i = 0; i < n_max_; ++i){
+            if (true == done_.data<int>()[i]) continue; // already locked
+            // simply lock by norm of residuals
+            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance){
+                done_.data<int>()[i] = 1;
+            }
+        }
+        
+        // checking overall convergence using subspace residual
+        {
+            ct::Tensor xax_tensor(t_type_, device_type_, {n_max_, n_max_});
+            ct::Tensor sub_res_tensor(t_type_, device_type_, {n_dim_, n_max_});
+
+            // xax = x^H * ax (Note: using 'C' for conjugate transpose)
+            gemm_op('C', 'N', n_max_, n_max_, n_dim_,
+                one, x_new_.data<T>(), n_dim_,
+                hx_new_.data<T>(), n_dim_,
+                zero, xax_tensor.data<T>(), n_max_);
+            
+            // sub_res = ax
+            copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, sub_res_tensor.data<T>(), 1);
+            
+            // sub_res -= x * xax
+            gemm_op('N', 'N', n_dim_, n_max_, n_max_,
+                neg_one, x_new_.data<T>(), n_dim_,
+                xax_tensor.data<T>(), n_max_,
+                one, sub_res_tensor.data<T>(), n_dim_);
+            
+            Real sub_res_norm = nrm2_op(n_dim_ * n_max_, sub_res_tensor.data<T>(), 1);
+            Real xax_norm = nrm2_op(n_max_ * n_max_, xax_tensor.data<T>(), 1);
+            
+            if (xax_norm > 1e-20) {
+                Real ratio = sub_res_norm / xax_norm;
+                if(ratio < tolerance){
+                     std::cout << "> subspace residual norm converged (" << ratio << ")" << std::endl;
+                     setmem_int_op()(done_.data<int>(), 1, n_max_);
+                }
+            }
+        }
+#else
         // only lock the first converged eigenvalues/vectors
         for(int i = 0; i < n_max_; ++i){
             if (done_.data<int>()[i]) continue; // already locked
-            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance){
+            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance * std::sqrt(static_cast<double>(n_dim_))){
                 // lock the vector
                 done_.data<int>()[i] = 1;
             }
@@ -443,6 +489,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
                 break;
             }
         }
+#endif
 // --- check overall convergence ---
         bool all_converged = true;
         // only count n_band_ instead of n_max_
@@ -453,7 +500,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
                 break;
             }
         }
-#ifdef DEBUG_LOBPCG
+#ifdef DEBUG_CONV
         std::cout << "DEBUG: iter=" << iter << " all_converged=" << all_converged << std::endl;
         std::cout << "DEBUG: done_ = ";
         for(int i=0; i<n_max_; ++i) std::cout << done_.data<int>()[i] << " ";
