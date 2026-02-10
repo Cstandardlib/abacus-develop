@@ -503,8 +503,9 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         int max_iter = this->diag_iter_max;
         // print default tolerance and max_iter for LOBPCG
         std::cout << "LOBPCG default tolerance: " << tolerance << ", max_iter: " << max_iter << std::endl;
-        max_iter = 1000; // LOBPCG is not stable enough, set max_iter to 200 to avoid divergence. TODO: further test and optimize LOBPCG in the future.
-        if (tolerance > 1e-6)tolerance = 1e-6;
+        // max_iter = 100; // LOBPCG is not stable enough, set max_iter to 200 to avoid divergence. TODO: further test and optimize LOBPCG in the future.
+        // if (tolerance > 1e-4) tolerance = 1e-4;
+        tolerance = 1e-3;
         std::cout << "LOBPCG current tolerance: " << tolerance << ", max_iter: " << max_iter << std::endl;
 
         DiagoLOBPCG<T, Device> lobpcg(pre_condition.data(), nband, ndim, nmax);
