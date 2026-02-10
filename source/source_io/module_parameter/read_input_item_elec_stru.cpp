@@ -10,7 +10,7 @@ void ReadInput::item_elec_stru()
     // Electronic Structure
     {
         Input_Item item("ks_solver");
-        item.annotation = "cg; dav; lapack; genelpa; elpa; scalapack_gvx; cusolver";
+        item.annotation = "cg; dav; dav_subspace; bpcg; lobpcg; lapack; genelpa; elpa; scalapack_gvx; cusolver";
         read_sync_string(input.ks_solver);
         item.reset_value = [](const Input_Item& item, Parameter& para) {
             if (para.input.ks_solver == "default")
@@ -62,7 +62,7 @@ void ReadInput::item_elec_stru()
         };
         item.check_value = [](const Input_Item& item, const Parameter& para) {
             const std::string& ks_solver = para.input.ks_solver;
-            const std::vector<std::string> pw_solvers = {"cg", "dav", "bpcg", "dav_subspace"};
+            const std::vector<std::string> pw_solvers = {"cg", "dav", "bpcg", "dav_subspace", "lobpcg"};
             const std::vector<std::string> lcao_solvers = {
                 "genelpa",
                 "elpa",
