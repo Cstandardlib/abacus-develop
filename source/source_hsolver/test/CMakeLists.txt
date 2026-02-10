@@ -11,7 +11,7 @@ if (ENABLE_MPI)
   AddTest(
     TARGET MODULE_HSOLVER_bpcg
     LIBS parameter  ${math_libs} base psi device container
-    SOURCES diago_bpcg_test.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp  
+    SOURCES diago_bpcg_test.cpp ../diago_bpcg.cpp ../para_linear_transform.cpp  ../diago_iter_assist.cpp
             ../../source_basis/module_pw/test/test_tool.cpp
             ../../source_hamilt/operator.cpp
             ../../source_pw/module_pwdft/op_pw.cpp
@@ -48,6 +48,22 @@ if (ENABLE_MPI)
             ../../source_hamilt/operator.cpp
             ../../source_pw/module_pwdft/op_pw.cpp
   )
+  AddTest(
+    TARGET MODULE_HSOLVER_lobpcg
+    LIBS parameter  ${math_libs} base psi device container
+    SOURCES diago_lobpcg_test.cpp ../diago_lobpcg.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
+            ../../source_basis/module_pw/test/test_tool.cpp
+            ../../source_hamilt/operator.cpp
+            ../../source_pw/module_pwdft/op_pw.cpp
+  )
+  AddTest(
+    TARGET MODULE_HSOLVER_lobpcg_simple
+    LIBS parameter  ${math_libs} base psi device container
+    SOURCES diago_lobpcg_simple_test.cpp ../diago_lobpcg.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
+  )
+
+  configure_file(H-small-3x3.dat ${CMAKE_CURRENT_BINARY_DIR}/H-small-3x3.dat COPYONLY)
+  configure_file(H-small-20x20.dat ${CMAKE_CURRENT_BINARY_DIR}/H-small-20x20.dat COPYONLY)
   if(ENABLE_LCAO)
   AddTest(
     TARGET MODULE_HSOLVER_cg_real
@@ -70,7 +86,7 @@ if (ENABLE_MPI)
   AddTest(
     TARGET MODULE_HSOLVER_base
     LIBS parameter  ${math_libs} psi device base
-    SOURCES test_hsolver.cpp 
+    SOURCES test_hsolver.cpp
   )
 
   AddTest(
@@ -121,6 +137,9 @@ if (ENABLE_MPI)
   target_compile_definitions(MODULE_HSOLVER_LCAO_cusolver PRIVATE __CUDA)
   endif()
 endif()
+install(FILES H-small-3x3.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+install(FILES H-small-6x6.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+install(FILES H-small-20x20.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 install(FILES H-KPoints-Si2.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 install(FILES H-GammaOnly-Si2.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 install(FILES S-KPoints-Si2.dat DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
@@ -150,13 +169,13 @@ if (USE_ELPA)
   AddTest(
     TARGET MODULE_HSOLVER_diago_hs_parallel
     LIBS parameter  ${math_libs} ELPA::ELPA base device MPI::MPI_CXX genelpa psi
-    SOURCES test_diago_hs_para.cpp ../diag_hs_para.cpp ../diago_pxxxgvx.cpp ../diago_elpa.cpp ../diago_scalapack.cpp 
+    SOURCES test_diago_hs_para.cpp ../diag_hs_para.cpp ../diago_pxxxgvx.cpp ../diago_elpa.cpp ../diago_scalapack.cpp
   )
 else()
   AddTest(
       TARGET MODULE_HSOLVER_diago_hs_parallel
       LIBS parameter  ${math_libs} base device MPI::MPI_CXX psi
-      SOURCES test_diago_hs_para.cpp ../diag_hs_para.cpp ../diago_pxxxgvx.cpp ../diago_scalapack.cpp 
+      SOURCES test_diago_hs_para.cpp ../diag_hs_para.cpp ../diago_pxxxgvx.cpp ../diago_scalapack.cpp
     )
 endif()
 
@@ -184,7 +203,7 @@ if (ENABLE_MPI)
   add_test(NAME MODULE_HSOLVER_dav_parallel
         COMMAND ${BASH} diago_david_parallel_test.sh
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-      ) 
+      )
   if(ENABLE_LCAO)
     add_test(NAME MODULE_HSOLVER_LCAO_parallel
           COMMAND ${BASH} diago_lcao_parallel_test.sh
