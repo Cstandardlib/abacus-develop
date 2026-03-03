@@ -494,7 +494,12 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         };
         const int ndim = psi.get_current_ngk();         /// dimension of matrix
         const int nband = psi.get_nbands();            /// number of eigenpairs sought
-        const int nmax = nband + 20;
+        // const int nmax = nband + 20;
+        const int nmax =  // nband * 1.2 to integer, with a minimum of nband + 5 and a maximum of nband + 50
+            std::min(nband + 50, std::max(nband + 5, static_cast<int>(nband * 1.2)));
+        // print nband and nmax for debugging
+        std::cout << "LOBPCG nband (number of eigenpairs sought): " << nband << std::endl;
+        std::cout << "LOBPCG nmax (subspace dimension): " << nmax << std::endl;
         const int ld_psi = psi.get_nbasis();           /// leading dimension of psi
 
         bool gen_eig = false;
@@ -505,9 +510,13 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         std::cout << "LOBPCG default tolerance: " << tolerance << ", max_iter: " << max_iter << std::endl;
         // max_iter = 100; // LOBPCG is not stable enough, set max_iter to 200 to avoid divergence. TODO: further test and optimize LOBPCG in the future.
         // if (tolerance > 1e-4) tolerance = 1e-4;
-        tolerance = 1e-3;
+        // if (tolerance > 1e-3) tolerance = 1e-3;
+        // tolerance = 1e-3;
         std::cout << "LOBPCG current tolerance: " << tolerance << ", max_iter: " << max_iter << std::endl;
 
+        // set temporary precondition array to 1
+        // std::vector<Real> precondition_temp(pre_condition.size(), 1.0);
+        // DiagoLOBPCG<T, Device> lobpcg(precondition_temp.data(), nband, ndim, nmax);
         DiagoLOBPCG<T, Device> lobpcg(pre_condition.data(), nband, ndim, nmax);
         bool ok = lobpcg.diag(hpsi_func, spsi_func, gen_eig,
             eigenvalue, psi.get_pointer(), ld_psi, tolerance, max_iter);

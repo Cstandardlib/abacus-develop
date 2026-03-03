@@ -2,6 +2,9 @@
 
 #include <random> // make random initial guess
 #include <cmath>  // std::sqrt
+#include <fstream>
+#include <iostream>
+#include <iomanip> 
 
 #include <source_base/kernels/math_kernel_op.h>
 // #include <source_base/global_function.h>
@@ -134,6 +137,7 @@ std::cout << "Using locking by trace." << std::endl;
 // #ifdef DEBUG_LOBPCG
 #ifdef DEBUG_SCF
 std::cout << "----- START LOBPCG -----" << std::endl;
+// std::cout << "precnd 1.0" << std::endl;
 std::cout << "n_band=" << this->n_band_ <<  ", n_dim=" << this->n_dim_ << ", n_max=" << this->n_max_ << std::endl;
 std::cout << "ld_psi_in=" << ld_psi_in << std::endl;
 std::cout << "tol=" << tolerance << std::endl;
@@ -149,16 +153,46 @@ std::cout << "max_iter=" << max_iter << std::endl;
         // // Call hpsi
         // hpsi_func(test_in, test_out, this->n_dim_, this->n_dim_);
 
-        // for (int i = 0; i < this->n_dim_; ++i) {
-        //     for (int j = 0; j < this->n_dim_; ++j) {
-        //         // std::cout << "H[" << i << "," << j << "] = " << std::real(test_out[i + j * this->n_dim_]) << std::endl;
-        //         std::cout << std::real(test_out[i + j * this->n_dim_]) << " ";
+        // // for (int i = 0; i < this->n_dim_; ++i) {
+        // //     for (int j = 0; j < this->n_dim_; ++j) {
+        // //         // std::cout << "H[" << i << "," << j << "] = " << std::real(test_out[i + j * this->n_dim_]) << std::endl;
+        // //         std::cout << std::real(test_out[i + j * this->n_dim_]) << " ";
+        // //     }
+        // //     std::cout << std::endl;
+        // // }
+        // // not cout but save to a file Si2.txt for debugging
+        // // auto mat = "H_matrix_Si2.txt";
+        // // auto mat = "H_matrix_Si2_complex.txt";
+        // // auto mat = "H_matrix_Si2_complex_cpp.txt";
+        // auto mat = "H_matrix_Si2_complex_cpp_nmax50.txt";
+        // std::ofstream outfile(mat);
+        // outfile << std::setprecision(16);  // double 最多约 15~17 位有效数字，16 是安全选择
+        // if (outfile.is_open()) {
+        //     for (int i = 0; i < this->n_dim_; ++i) {
+        //         for (int j = 0; j < this->n_dim_; ++j) {
+        //             outfile << std::real(test_out[i + j * this->n_dim_]) << " ";
+        //             outfile << test_out[i + j * this->n_dim_] << " ";
+        //             // output with a+bi format
+        //             // std::complex<double> val = test_out[i + j * this->n_dim_];
+        //             // // outfile << val.real() << "+" << val.imag() << "i ";
+        //             // outfile << val.real();
+        //             // if (val.imag() >= 0.0) {
+        //             //     outfile << "+" << val.imag() << "i ";
+        //             // } else { // 负数自带减号，直接输出即可：如 1-2i
+        //             //     outfile << val.imag() << "i ";
+        //             // }
+        //         }
+        //         outfile << std::endl;
         //     }
-        //     std::cout << std::endl;
+        //     outfile.close();
+        //     std::cout << "H matrix saved to " << mat << std::endl;
+        // } else {
+        //     std::cerr << "Unable to open file to save H matrix." << std::endl;
         // }
         // delete[] test_in;
         // delete[] test_out;
 // return false; // for now just test the hpsi_func
+// exit(0);
 #endif
     // [] for actual shape in memory; () for effective shape referenced
 
@@ -413,13 +447,13 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
             const Real lambda = eig_.data<Real>()[i];
             T alpha = T(-lambda);
             if(gen_eig){ // residual = Hx - eig Sx
-                // Corrected: Remove inner loop that was accumulating all vectors
-                const T *sspace_col = sspace_.data<T>()  + i * n_dim_;
-                axpy_op(n_dim_, &alpha, sspace_col, 1, r_col, 1);
+                // residual must be based on current Ritz vectors x_new_/sx_new_
+                const T *sx_col = sx_new_.data<T>()  + i * n_dim_;
+                axpy_op(n_dim_, &alpha, sx_col, 1, r_col, 1);
             } else { // residual = Hx - eig x
-                // Corrected: Remove inner loop that was accumulating all vectors
-                const T *space_col = space_.data<T>()  + i * n_dim_;
-                axpy_op(n_dim_, &alpha, space_col, 1, r_col, 1);
+                // residual must be based on current Ritz vectors x_new_
+                const T *x_col = x_new_.data<T>()  + i * n_dim_;
+                axpy_op(n_dim_, &alpha, x_col, 1, r_col, 1);
             }
             // r_col, n_dim_ - elements vector
             r_norm_.data<Real>()[i] = nrm2_op(n_dim_, r_col, 1); // std::sqrt(static_cast<double>(n_dim_));
@@ -516,7 +550,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         if (all_converged){
             // copy x_new to input psi_in
             // syncmem_complex_2d_op()(this->evec_.data<T>(), this->n_dim_, psi_in, ld_psi_in, this->n_dim_, this->n_band_);
-            syncmem_complex_2d_op()(psi_in, ld_psi_in, this->evec_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
+            syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             // copy eig_ to input eigenvalue_in
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
 // --- return ---
@@ -613,10 +647,11 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
         //                 const Real* precondition,
         //                 const Real* eigenvalues);
         // space_(from ind_w_ column) = T * r
+        // FIX: offset residual_ by ind_x_ to get residuals of active vectors
         copy_op(n_dim_ * n_active_,
-                residual_.data<T>(), 1,
+                residual_.data<T>() + ind_x_ * n_dim_, 1, // here is the real bug fixed!!!
                 space_.data<T>() + ind_w_ * n_dim_, 1);
-        precondition_op(n_dim_, space_.data<T>(), ind_w_, n_active_, prec_.data<Real>(), eig_.data<Real>());
+        precondition_op(n_dim_, space_.data<T>(), ind_w_, n_active_, prec_.data<Real>(), eig_.data<Real>() + ind_x_);
 
         // orthonormalize w against x and p, then orthonormalize w
         if (gen_eig){
@@ -678,7 +713,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
         if(iter >= max_iter-1){
             std::cerr << "LOBPCG did not converge within " << max_iter << " iterations." << std::endl;
             // Return best available results so far
-            syncmem_complex_2d_op()(psi_in, ld_psi_in, this->space_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
+            syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
 #ifdef DEBUG_LOBPCG            
             // print current best eigenvalue and residual for all bands
