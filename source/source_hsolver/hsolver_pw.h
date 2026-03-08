@@ -82,7 +82,7 @@ class HSolverPW
 
     const int scf_iter;      // Start from 1
     const int diag_iter_max; // max iter times for diagonalization
-    const double diag_thr;   // threshold for diagonalization
+    double diag_thr;   // threshold for diagonalization
 
     const bool need_subspace; // for cg or dav_subspace
 
@@ -113,7 +113,7 @@ class HSolverPW
     std::vector<int> k_order;
     std::unordered_map<int, int> k_parent;
     std::vector<ModuleBase::Vector3<double>> kvecs_c;
-    
+
     void build_k_neighbors();
     void propagate_psi(psi::Psi<T, Device>& psi, const int from_ik, const int to_ik);
 };

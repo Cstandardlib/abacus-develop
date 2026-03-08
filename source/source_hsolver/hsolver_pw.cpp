@@ -252,6 +252,8 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
 
     const int cur_nbasis = psi.get_current_nbas();
 
+    this->diag_thr=1e-13;
+    std::cout << "Setting diag thr to 1e-13!" << std::endl;
     if (this->method == "cg")
     {
         // wrap the subspace_func into a lambda function

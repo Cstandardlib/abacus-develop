@@ -1,8 +1,8 @@
 #ifndef DIAGO_LOBPCG_H_
 #define DIAGO_LOBPCG_H_
 
-#define DEBUG_SCF
-#define DEBUG_CONV
+// #define DEBUG_SCF
+// #define DEBUG_CONV
 // #define LOCKING_BY_TRACE
 // #define DEBUG_LOBPCG
 // #define DEBUG_INIT

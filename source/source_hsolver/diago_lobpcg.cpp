@@ -7,6 +7,7 @@
 #include <iomanip> 
 
 #include <source_base/kernels/math_kernel_op.h>
+#include <source_base/timer.h>
 // #include <source_base/global_function.h>
 #include <source_base/module_container/ATen/core/tensor.h>
 #include <source_base/module_container/ATen/core/tensor_types.h>
@@ -131,6 +132,8 @@ bool DiagoLOBPCG<T, Device>::diag(
     const double tolerance,
     const int max_iter)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "diag");
+    ModuleBase::timer::tick("Diago_LOBPCG", "init");
 #ifdef LOCKING_BY_TRACE
 std::cout << "Using locking by trace." << std::endl;
 #endif
@@ -217,11 +220,13 @@ std::cout << "max_iter=" << max_iter << std::endl;
     //     spsi_func(evec_.data<T>(), sx_new_.data<T>(), n_dim_, n_max_);
     //     this->s_ortho(x_block, sx_block);
     }
+    ModuleBase::timer::tick("Diago_LOBPCG", "init");
 
 // --- 1. first iter --- explicit do the fist Rayleigh-Ritz for X'HX
 #ifdef DEBUG_LOBPCG
 std::cout << "--- Debug: Entering first iteration ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "first_iter");
 
     // copy evec to space
     copy_op(n_dim_*n_max_, evec_.data<T>(), 1, space_.data<T>(), 1);
@@ -234,9 +239,11 @@ std::cout << "--- Debug: Entering first iteration ---" << std::endl;
 std::cout << "--- First iter Rayleigh-Ritz ---" << std::endl;
 #endif
     // --- 1.1 initial Rayleigh-Ritz procedure ---
+    ModuleBase::timer::tick("Diago_LOBPCG", "first_iter_rr");
     len_working_ = n_max_; // first round, no p no w
     this->rayleigh_ritz(space_.data<T>(), hspace_.data<T>(), len_space_, n_dim_, len_working_,
         h_red_.data<T>(), e_red_.data<Real>());    // now (u, lambda) = (h_red, e_red)
+    ModuleBase::timer::tick("Diago_LOBPCG", "first_iter_rr");
 
     // eig_(1:n_max_) = e_red_(1:n_max_)
     copy_real_op(n_max_, e_red_.data<Real>(), 1, eig_.data<Real>(), 1);
@@ -319,6 +326,7 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     if(gen_eig){}
     // Corrected argument order: normalize W (2nd ptr) against X (1st ptr)
     ortho_against_y(n_dim_, n_max_, n_max_, space_.data<T>() + ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
+    ModuleBase::timer::tick("Diago_LOBPCG", "first_iter");
 #ifdef DEBUG_LOBPCG
     std::cout << "--- first iter over ---" << std::endl;
     std::cout << "Eigenvalues after first Rayleigh-Ritz:" << std::endl;
@@ -355,6 +363,7 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
 #endif
     setmem_int_op()(done_.data<int>(), false, n_max_);
     for (int iter = 0; iter < max_iter; ++iter) {
+        ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // #ifdef DEBUG_SCF
 // std::cout << "----- LOBPCG main loop: iter " << iter << " -----" << std::endl;
 // #endif
@@ -376,7 +385,9 @@ std::cout << "n_dim_: " << n_dim_ << std::endl;
 std::cout << "ind_w_: " << ind_w_ << std::endl;
 std::cout << "n_active_: " << n_active_ << std::endl;
 #endif        
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_hpsi");
         hpsi_func(space_.data<T>() + n_dim_ * ind_w_, hspace_.data<T>() + n_dim_ * ind_w_, n_dim_, n_active_);
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_hpsi");
         // --- 2.2 construct the reduced matrix and diagonalization ---
 #ifdef DEBUG_LOBPCG
 std::cout << "----- end hpsi  -----" << std::endl;
@@ -396,8 +407,10 @@ std::cout << "len_working_: " << len_working_ << std::endl;
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
         this->rayleigh_ritz(space_.data<T>(), hspace_.data<T>(), len_space_, n_dim_, len_working_,
                 h_red_.data<T>(), e_red_.data<Real>());    // now (u, lambda) = (h_red, e_red)
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
 
 #ifdef DEBUG_LOBPCG
         std::cout << "Eigenvalues after loop Rayleigh-Ritz:" << std::endl;
@@ -418,6 +431,7 @@ std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // x_new_ = space * h_red
         gemm_op('N', 'N', n_dim_, n_max_, len_working_,
             one, space_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
@@ -432,10 +446,12 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
             //     one, sspace_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
             //     zero, sx_new_.data<T>(), n_dim_);
         }
+        ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // --- 2.4 compute residuals & norms ---
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: residuals & norms ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_residual");
         // residual_ = hx_new
         copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, residual_.data<T>(), 1);
         // loop over eigenpairs
@@ -458,12 +474,14 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
             // r_col, n_dim_ - elements vector
             r_norm_.data<Real>()[i] = nrm2_op(n_dim_, r_col, 1); // std::sqrt(static_cast<double>(n_dim_));
         }
+        ModuleBase::timer::tick("Diago_LOBPCG", "iter_residual");
         // --- 2.5 check convergence and locking ---
 // !!!
 // Maybe Use Trace to check!
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: check convergence and locking ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_lock");
         // --- 2.5 check convergence and locking ---
 #ifdef LOCKING_BY_TRACE
         // LOCKING STRATEGY BY TRACE MINIMIZATION
@@ -553,15 +571,20 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             // copy eig_ to input eigenvalue_in
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
+            ModuleBase::timer::tick("Diago_LOBPCG", "iter_lock");
+            ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // --- return ---
 // converged
             std::cout << "Converged at iteration " << iter << " with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            ModuleBase::timer::tick("Diago_LOBPCG", "diag");
             return true;
         }
+        ModuleBase::timer::tick("Diago_LOBPCG", "iter_lock");
         // --- 2.6 check active eigenvalues and update blockvectors X, P, W ---
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: 2.6 check active eigenvalues and update blockvectors X, P, W ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
         // 2.6.1 count active
         int n_conv = 0; // converged number
         for (int i = 0; i < n_max_; ++i) { if (done_.data<int>()[i]) ++n_conv; }
@@ -664,6 +687,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
             ortho_against_y(n_dim_, n_max_+n_active_, n_active_,
                 space_.data<T>()+ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
         }
+        ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
 
         //     this->compute_residuals(hx_active, sx_active, e_active, res_active, gen_eig);
         //     this->compute_residual_norms(res_active, r_norm_.slice({0, 0}, {2, n_active_}));
@@ -715,6 +739,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
             // Return best available results so far
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
+            ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 #ifdef DEBUG_LOBPCG            
             // print current best eigenvalue and residual for all bands
             std::cerr << "Current best eigenvalues and residuals:" << std::endl;
@@ -723,8 +748,10 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
                 data<Real>()[i] << ", Residual = " << r_norm_.data<Real>()[i] << std::endl;
             }
 #endif            
+            ModuleBase::timer::tick("Diago_LOBPCG", "diag");
             return false;
         }
+        ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
     } // end - main for loop
 
     // // Final Rayleigh-Ritz to get the best approximation
@@ -736,6 +763,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
     // syncmem_complex_op()(psi_in, final_x.data<T>(), n_basis_ * n_band_);
 
     // return converged;
+    ModuleBase::timer::tick("Diago_LOBPCG", "diag");
     return true;
 }
 
@@ -744,6 +772,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
 template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::check_init_guess(const int n, const int m, T *x, const int ldx)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "check_init_guess");
     // check value of x[n, m]
     // if zero, generate random guess
     if (x == nullptr || ldx == 0) {
@@ -779,6 +808,7 @@ void DiagoLOBPCG<T, Device>::check_init_guess(const int n, const int m, T *x, co
     }
     // if input x is not null, orthogonalize it.
     this->ortho(n, m, x, ldx);
+    ModuleBase::timer::tick("Diago_LOBPCG", "check_init_guess");
 #ifdef DEBUG_INIT
 // verified!
     // // print x
@@ -864,6 +894,7 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
     T *space, T *hspace, const int len_space, const int dim, const int len_working,
     T *h_red, Real *e_red)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "rayleigh_ritz");
     /*
      * Solving a reduced standard eigenvalue problem on the space spanned by the S-ortho vectors.
      *
@@ -892,8 +923,6 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
     // use heevx for solving all len_working eigenpairs of h_red
     // void operator()(const int dim, const int lda,const T *Mat, const int neig, Real *eigen_val, T *eigen_vec);
     // h_red(len_space, len_space), ld = len_space, n = len_working, solve len_working eigenpairs
-    // ct::kernels::lapack_heevx<T, ct_Device> heevx;
-    // ct::kernels::lapack_heevx<T, ct_Device>()(nbase, nbase_x, hcc, nband, eigenvalue_gpu, vcc);
 #ifdef DEBUG_RR
 std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 #endif
@@ -901,6 +930,7 @@ std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
     // heevd(const int dim, T* Mat, const int lda, Real* eigen_val);
     // heevd(len_working, h_red, len_space, e_red);
     // now h_red is overwritten by eigenvectors, e_red for eigenvalues
+    ModuleBase::timer::tick("Diago_LOBPCG", "rayleigh_ritz");
 }
 
 // ==================== Ortho ====================
@@ -908,10 +938,12 @@ std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
     // ortho by QR
     ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
     qr(n, m, x, ldx);
     // now x is Q, with orthogonal columns
+    ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
 
     // ---
     // Orthonormalize the block vector u of shape (n, m) using Cholesky decomposition
@@ -933,6 +965,7 @@ void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx
 template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho_against_y(const int n, const int m, const int k, T *x, const int ldx, const T *y, const int ldy)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "ortho_against_y");
 #ifdef DEBUG_LOBPCG
     std::cout << "--- ortho_against_y: start ---" << std::endl;
 #endif
@@ -968,7 +1001,7 @@ void DiagoLOBPCG<T, Device>::ortho_against_y(const int n, const int m, const int
 // std::cout << "--- ortho_against_y: computing yby ---" << std::endl;
 #endif
     // y(n, m), yby(m, m)
-    ct::Tensor yby(t_type_, device_type_, {m, m});
+    // ct::Tensor yby(t_type_, device_type_, {m, m});
 #ifdef DEBUG_ORTHO_Y
 // std::cout << "m = " << m << ", n = " << n << std::endl;
 // std::cout << "ldy = " << ldy << ", ldx = " << ldx << std::endl;
@@ -981,7 +1014,7 @@ void DiagoLOBPCG<T, Device>::ortho_against_y(const int n, const int m, const int
 #endif
 
 // std::cout << "n=" << n << ", m=" << m << ", k=" << k << ", ldx=" << ldx << ", ldy=" << ldy << std::endl;
-    gemm_op('C', 'N', m, m, n, one, y, ldy, y, ldy, zero, yby.data<T>(), m);
+    // gemm_op('C', 'N', m, m, n, one, y, ldy, y, ldy, zero, yby.data<T>(), m);
 
     // Check if Y'Y is identity
     // For now, assume y is orthonormal to avoid complexity
@@ -1084,6 +1117,7 @@ std::cout << "--- ortho_against_y: loop ortho x ---" << std::endl;
 #ifdef DEBUG_LOBPCG
 std ::cout << "--- ortho_against_y: end ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "ortho_against_y");
 }
 
 template <typename T, typename Device>
@@ -1091,6 +1125,7 @@ void DiagoLOBPCG<T, Device>::get_expansion_coeffs(const int len_space, const int
     const int n_max, const int n_active,
     T *h_red, T *u_x, T *u_p)
 {
+    ModuleBase::timer::tick("Diago_LOBPCG", "get_expansion_coeffs");
 #ifdef DEBUG_LOBPCG
 std::cout << "--- get_expansion_coeffs: start ---" << std::endl;
 // std::cout << "u_x = " << u_x << std::endl;
@@ -1146,6 +1181,7 @@ std::cout << "--- get_expansion_coeffs: ortho ---" << std::endl;
 #ifdef DEBUG_LOBPCG
 std::cout << "--- get_expansion_coeffs: end ---" << std::endl;
 #endif
+    ModuleBase::timer::tick("Diago_LOBPCG", "get_expansion_coeffs");
 
 #endif
 }
