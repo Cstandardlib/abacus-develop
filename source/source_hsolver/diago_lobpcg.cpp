@@ -14,6 +14,9 @@
 #include <source_base/module_container/ATen/core/tensor_map.h>
 
 #include <source_hsolver/kernels/bpcg_kernel_op.h> // normalize_op, precondition_op, apply_eigenvalues_op
+#ifdef __MPI
+#include <mpi.h>
+#endif
 
 namespace ct = container;
 
@@ -118,6 +121,96 @@ DiagoLOBPCG<T, Device>::~DiagoLOBPCG()
     // No explicit deallocation needed for ct::Tensor
 
     // Note, we do not need to free the h_prec and psi pointer as they are refs to the outside data
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::set_diag_comm(const diag_comm_info& comm_info)
+{
+    this->comm_rank_ = comm_info.rank;
+    this->comm_nproc_ = comm_info.nproc;
+#ifdef __MPI
+    this->comm_ = comm_info.comm;
+#endif
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::allreduce_sum_inplace(T* data, const int count)
+{
+#ifdef __MPI
+    if (this->comm_nproc_ <= 1 || data == nullptr || count <= 0) {
+        return;
+    }
+    if (std::is_same<T, std::complex<float>>::value) {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_C_FLOAT_COMPLEX, MPI_SUM, this->comm_);
+    } else if (std::is_same<T, std::complex<double>>::value) {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_DOUBLE_COMPLEX, MPI_SUM, this->comm_);
+    } else if (std::is_same<T, float>::value) {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_FLOAT, MPI_SUM, this->comm_);
+    } else {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_DOUBLE, MPI_SUM, this->comm_);
+    }
+#else
+    (void)data;
+    (void)count;
+#endif
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::allreduce_sum_inplace_real(Real* data, const int count)
+{
+#ifdef __MPI
+    if (this->comm_nproc_ <= 1 || data == nullptr || count <= 0) {
+        return;
+    }
+    if (std::is_same<Real, float>::value) {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_FLOAT, MPI_SUM, this->comm_);
+    } else {
+        MPI_Allreduce(MPI_IN_PLACE, data, count, MPI_DOUBLE, MPI_SUM, this->comm_);
+    }
+#else
+    (void)data;
+    (void)count;
+#endif
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::bcast_inplace(T* data, const int count)
+{
+#ifdef __MPI
+    if (this->comm_nproc_ <= 1 || data == nullptr || count <= 0) {
+        return;
+    }
+    if (std::is_same<T, std::complex<float>>::value) {
+        MPI_Bcast(data, count, MPI_C_FLOAT_COMPLEX, 0, this->comm_);
+    } else if (std::is_same<T, std::complex<double>>::value) {
+        MPI_Bcast(data, count, MPI_DOUBLE_COMPLEX, 0, this->comm_);
+    } else if (std::is_same<T, float>::value) {
+        MPI_Bcast(data, count, MPI_FLOAT, 0, this->comm_);
+    } else {
+        MPI_Bcast(data, count, MPI_DOUBLE, 0, this->comm_);
+    }
+#else
+    (void)data;
+    (void)count;
+#endif
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::bcast_inplace_real(Real* data, const int count)
+{
+#ifdef __MPI
+    if (this->comm_nproc_ <= 1 || data == nullptr || count <= 0) {
+        return;
+    }
+    if (std::is_same<Real, float>::value) {
+        MPI_Bcast(data, count, MPI_FLOAT, 0, this->comm_);
+    } else {
+        MPI_Bcast(data, count, MPI_DOUBLE, 0, this->comm_);
+    }
+#else
+    (void)data;
+    (void)count;
+#endif
 }
 
 template <typename T, typename Device>
@@ -265,6 +358,9 @@ std::cout << "--- First iter Rayleigh-Ritz ---" << std::endl;
         zero, evec_.data<T>(), n_dim_);
     // hspace_(n_dim_, n_max_) = evec_(n_dim_, n_max_)
     copy_op(n_dim_*n_max_, evec_.data<T>(), 1, hspace_.data<T>(), 1);
+    // Keep X globally orthonormal before building residuals in distributed runs.
+    this->ortho(n_dim_, n_max_, space_.data<T>(), n_dim_);
+    hpsi_func(space_.data<T>(), hspace_.data<T>(), n_dim_, n_max_);
     if(gen_eig){
         // // evec_ = sspace_ * h_red_
         // gemm_op('N', 'N', n_dim_, n_max_, n_max_,
@@ -355,6 +451,12 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     // tol_max_ = 10.0 * tolerance;
 
     n_active_ = n_max_;
+    Real global_dim_real = static_cast<Real>(n_dim_);
+    this->allreduce_sum_inplace_real(&global_dim_real, 1);
+    if (global_dim_real < static_cast<Real>(1.0)) {
+        global_dim_real = static_cast<Real>(1.0);
+    }
+    const Real inv_sqrt_global_dim = static_cast<Real>(1.0) / std::sqrt(global_dim_real);
     // Initialize convergence flags
 #ifdef DEBUG_LOBPCG
     // return false; // Removed early exit
@@ -446,6 +548,9 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
             //     one, sspace_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
             //     zero, sx_new_.data<T>(), n_dim_);
         }
+        // Re-orthogonalize Ritz vectors and refresh HX to avoid drift of subspace orthogonality.
+        this->ortho(n_dim_, n_max_, x_new_.data<T>(), n_dim_);
+        hpsi_func(x_new_.data<T>(), hx_new_.data<T>(), n_dim_, n_max_);
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // --- 2.4 compute residuals & norms ---
 #ifdef DEBUG_LOBPCG
@@ -456,8 +561,6 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
         copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, residual_.data<T>(), 1);
         // loop over eigenpairs
         for(int i = 0; i < n_max_; i++) {
-            // if already converged, continue
-            if(true == done_.data<int>()[i]) continue;
             // compute residual, residual <- Hx - eig x  | or | Hx - eig S x
             T *r_col = residual_.data<T>() + i * n_dim_;
             const Real lambda = eig_.data<Real>()[i];
@@ -472,7 +575,12 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
                 axpy_op(n_dim_, &alpha, x_col, 1, r_col, 1);
             }
             // r_col, n_dim_ - elements vector
-            r_norm_.data<Real>()[i] = nrm2_op(n_dim_, r_col, 1); // std::sqrt(static_cast<double>(n_dim_));
+            const Real local_norm = nrm2_op(n_dim_, r_col, 1);
+            r_norm_.data<Real>()[i] = local_norm * local_norm;
+        }
+        this->allreduce_sum_inplace_real(r_norm_.data<Real>(), n_max_);
+        for (int i = 0; i < n_max_; ++i) {
+            r_norm_.data<Real>()[i] = std::sqrt(r_norm_.data<Real>()[i]) * inv_sqrt_global_dim;
         }
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_residual");
         // --- 2.5 check convergence and locking ---
@@ -503,6 +611,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
                 one, x_new_.data<T>(), n_dim_,
                 hx_new_.data<T>(), n_dim_,
                 zero, xax_tensor.data<T>(), n_max_);
+            this->allreduce_sum_inplace(xax_tensor.data<T>(), n_max_ * n_max_);
             
             // sub_res = ax
             copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, sub_res_tensor.data<T>(), 1);
@@ -515,6 +624,12 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             
             Real sub_res_norm = nrm2_op(n_dim_ * n_max_, sub_res_tensor.data<T>(), 1);
             Real xax_norm = nrm2_op(n_max_ * n_max_, xax_tensor.data<T>(), 1);
+            sub_res_norm *= sub_res_norm;
+            xax_norm *= xax_norm;
+            this->allreduce_sum_inplace_real(&sub_res_norm, 1);
+            this->allreduce_sum_inplace_real(&xax_norm, 1);
+            sub_res_norm = std::sqrt(sub_res_norm);
+            xax_norm = std::sqrt(xax_norm);
             
             if (xax_norm > 1e-20) {
                 Real ratio = sub_res_norm / xax_norm;
@@ -528,7 +643,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         // only lock the first converged eigenvalues/vectors
         for(int i = 0; i < n_max_; ++i){
             if (done_.data<int>()[i]) continue; // already locked
-            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance * std::sqrt(static_cast<double>(n_dim_))){
+            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance){
                 // lock the vector
                 done_.data<int>()[i] = 1;
             }
@@ -550,6 +665,15 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             if (!done_.data<int>()[i]) {
                 all_converged = false;
                 break;
+            }
+        }
+        // Guard against sticky-lock false positives: require current residuals to satisfy tolerance.
+        if (all_converged) {
+            for (int i = 0; i < n_band_; ++i) {
+                if (r_norm_.data<Real>()[i] >= tolerance) {
+                    all_converged = false;
+                    break;
+                }
             }
         }
 #ifdef DEBUG_CONV
@@ -916,7 +1040,9 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
 #ifdef DEBUG_RR
     std::cout << "--- INNER Rayleigh-Ritz: calculate h_red = space^T * hspace ---" << std::endl;
 #endif
+    setmem_complex_op()(h_red, T(0.0), len_space * len_space);
     gemm_op('C', 'N', len_working, len_working, dim, one, space, dim, hspace, dim, zero, h_red, len_space);
+    this->allreduce_sum_inplace(h_red, len_space * len_space);
     // now h_red is the reduced matrix
     //
     // 2. Perform the Rayleigh-Ritz procedure to find the eigenvalues and eigenvectors of h_red
@@ -926,7 +1052,11 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
 #ifdef DEBUG_RR
 std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 #endif
-    heevx(len_working, len_space, h_red, len_working, e_red, h_red);
+    if (this->comm_rank_ == 0) {
+        heevx(len_working, len_space, h_red, len_working, e_red, h_red);
+    }
+    this->bcast_inplace_real(e_red, len_working);
+    this->bcast_inplace(h_red, len_space * len_space);
     // heevd(const int dim, T* Mat, const int lda, Real* eigen_val);
     // heevd(len_working, h_red, len_space, e_red);
     // now h_red is overwritten by eigenvectors, e_red for eigenvalues
@@ -939,10 +1069,59 @@ template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx)
 {
     ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
-    // ortho by QR
-    ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
-    qr(n, m, x, ldx);
-    // now x is Q, with orthogonal columns
+    if (this->comm_nproc_ <= 1) {
+        // Serial path: ortho by QR.
+        ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
+        qr(n, m, x, ldx);
+        ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
+        return;
+    }
+
+    // Parallel path: X <- X * (X^H X)^(-1/2)
+    // 1) Build local Gram matrix.
+    ct::Tensor gram(t_type_, device_type_, {m, m});
+    gram.zero();
+    gemm_op('C', 'N', m, m, n, one, x, ldx, x, ldx, zero, gram.data<T>(), m);
+    this->allreduce_sum_inplace(gram.data<T>(), m * m);
+
+    // 2) Solve Gram = U * D * U^H on root, then broadcast U,D.
+    ct::Tensor eval(r_type_, device_type_, {m});
+    eval.zero();
+    if (this->comm_rank_ == 0) {
+        heevx(m, m, gram.data<T>(), m, eval.data<Real>(), gram.data<T>());
+    }
+    this->bcast_inplace(gram.data<T>(), m * m);
+    this->bcast_inplace_real(eval.data<Real>(), m);
+
+    // 3) Compute U * D^(-1/2) * U^H.
+    ct::Tensor u_scaled(t_type_, device_type_, {m, m});
+    ct::Tensor g_inv_half(t_type_, device_type_, {m, m});
+    copy_op(m * m, gram.data<T>(), 1, u_scaled.data<T>(), 1);
+
+    const Real eps = 1e-14;
+    for (int j = 0; j < m; ++j) {
+        Real dj = eval.data<Real>()[j];
+        if (dj < eps) {
+            dj = eps;
+        }
+        const Real scale = 1.0 / std::sqrt(dj);
+        for (int i = 0; i < m; ++i) {
+            u_scaled.data<T>()[i + j * m] *= T(scale);
+        }
+    }
+    gemm_op('N', 'C', m, m, m,
+            one, u_scaled.data<T>(), m,
+            gram.data<T>(), m,
+            zero, g_inv_half.data<T>(), m);
+
+    // 4) Apply normalization transform on local rows.
+    ct::Tensor x_ortho(t_type_, device_type_, {n, m});
+    gemm_op('N', 'N', n, m, m,
+            one, x, ldx,
+            g_inv_half.data<T>(), m,
+            zero, x_ortho.data<T>(), ldx);
+    copy_op(n * m, x_ortho.data<T>(), 1, x, 1);
+
     ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
 
     // ---
@@ -993,8 +1172,13 @@ void DiagoLOBPCG<T, Device>::ortho_against_y(const int n, const int m, const int
 
     // bool assume_y_orthonormal = true;
 
-    // First check if input y is orthonormal
+    // Build an orthonormal reference basis from Y to avoid assuming [X,P] is already orthonormal.
     bool is_y_orthonormal = true;
+    ct::Tensor y_ortho(t_type_, device_type_, {n, m});
+    syncmem_complex_2d_op()(y_ortho.data<T>(), n, y, ldy, n, m);
+    this->ortho(n, m, y_ortho.data<T>(), n);
+    const T* y_ref = y_ortho.data<T>();
+    const int ldy_ref = n;
 
     // Compute Y'Y
 #ifdef DEBUG_ORTHO_Y
@@ -1045,7 +1229,8 @@ std::cout << "--- ortho_against_y: ortho loop ---" << std::endl;
     while (norm_overlap >= tol_ortho && iter_cnt > 0) {
         // Compute Y'X
         // yb(m, k) = y'(m, n) * x(n, k)
-        gemm_op('C', 'N', m, k, n, one, y, ldy, x, ldx, zero, ybx.data<T>(), m);
+        gemm_op('C', 'N', m, k, n, one, y_ref, ldy_ref, x, ldx, zero, ybx.data<T>(), m);
+        this->allreduce_sum_inplace(ybx.data<T>(), m * k);
 
         if (!is_y_orthonormal) {
             // If y is not orthonormal, solve Y'Y y_coeff = Y'X
@@ -1062,7 +1247,7 @@ std::cout << "--- ortho_against_y: X - Y * y_coeff ---" << std::endl;
         // X = X - Y * y_coeff
         // Copy x to temp_x first
         // syncmem_complex_op()(temp_x.data<T>(), x, n * k);
-        gemm_op('N', 'N', n, k, m, neg_one, y, ldy, y_coeff.data<T>(), m, one, x, ldx);
+        gemm_op('N', 'N', n, k, m, neg_one, y_ref, ldy_ref, y_coeff.data<T>(), m, one, x, ldx);
 
         // Check for linear dependence / collapse
 #if !defined(__CUDA) && !defined(__ROCM)
@@ -1072,15 +1257,9 @@ std::cout << "--- ortho_against_y: X - Y * y_coeff ---" << std::endl;
         
         if (x_norm_check < 1.0e-12) {
 #ifdef DEBUG_ORTHO_Y
-            std::cout << "--- ortho_against_y: vector collapsed (norm=" << x_norm_check << "), randomizing ---" << std::endl;
+            std::cout << "--- ortho_against_y: vector collapsed (norm=" << x_norm_check << "), stop re-orth loop ---" << std::endl;
 #endif
-            std::random_device rd;
-            std::default_random_engine engine(rd());
-            std::uniform_real_distribution<double> dist(0.0, 1.0);
-            // Re-populate with random values
-            for(int i=0; i<n*k; ++i) {
-                x[i] = static_cast<T>(dist(engine));
-            }
+            break;
         }
 #endif
 
@@ -1091,7 +1270,8 @@ std::cout << "--- ortho_against_y: loop ortho x ---" << std::endl;
         this->ortho(n, k, x, ldx);
 
         // Compute overlap = Y^T X after orthonormalization
-        gemm_op('C', 'N', m, k, n, one, y, ldy, x, ldx, zero, overlap.data<T>(), m);
+        gemm_op('C', 'N', m, k, n, one, y_ref, ldy_ref, x, ldx, zero, overlap.data<T>(), m);
+        this->allreduce_sum_inplace(overlap.data<T>(), m * k);
 
         // Compute norm of overlap (Frobenius norm)
         norm_overlap = 0.0;

@@ -114,6 +114,15 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
                                             const std::vector<double>& ethr_band)
 {
     ModuleBase::timer::tick("Diago_DavSubspace", "diag_once");
+    // print input dimensions, e.g.
+    // n_band=14, n_dim=2085, n_max=34
+    // ld_psi_in=2085
+    // tol=1e-06
+    // max_iter=1000
+    std::cout << "DAV Subspace diag_once: n_band=" << this->n_band << ", n_dim=" << this->dim << ", nbase_x=" << this->nbase_x << std::endl;
+    std::cout << "DAV Subspace diag_once: ld_psi_in=" << psi_in_dmax << std::endl;
+    std::cout << "DAV Subspace diag_once: tol=" << this->diag_thr << std::endl;
+    std::cout << "DAV Subspace diag_once: max_iter=" << this->iter_nmax << std::endl;
 
     // the eigenvalues in dav iter
     std::vector<Real> eigenvalue_iter(this->nbase_x, 0.0);

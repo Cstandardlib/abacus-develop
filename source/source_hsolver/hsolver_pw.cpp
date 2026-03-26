@@ -252,8 +252,8 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
 
     const int cur_nbasis = psi.get_current_nbas();
 
-    this->diag_thr=1e-13;
-    std::cout << "Setting diag thr to 1e-13!" << std::endl;
+    // this->diag_thr=1e-13;
+    // std::cout << "Setting diag thr to 1e-13!" << std::endl;
     if (this->method == "cg")
     {
         // wrap the subspace_func into a lambda function
@@ -506,10 +506,14 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
 
         bool gen_eig = false;
 
-        double tolerance = this->diag_thr;
+        // Keep LOBPCG tolerance coupled to SCF-driven diag_thr, but solve eigenpairs tighter.
+        constexpr double lobpcg_tol_scale = 0.2;
+        double tolerance = this->diag_thr * lobpcg_tol_scale;
         int max_iter = this->diag_iter_max;
         // print default tolerance and max_iter for LOBPCG
-        std::cout << "LOBPCG default tolerance: " << tolerance << ", max_iter: " << max_iter << std::endl;
+        std::cout << "LOBPCG diag_thr: " << this->diag_thr
+              << ", tolerance scale: " << lobpcg_tol_scale
+              << ", max_iter: " << max_iter << std::endl;
         // max_iter = 100; // LOBPCG is not stable enough, set max_iter to 200 to avoid divergence. TODO: further test and optimize LOBPCG in the future.
         // if (tolerance > 1e-4) tolerance = 1e-4;
         // if (tolerance > 1e-3) tolerance = 1e-3;
@@ -520,6 +524,7 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         // std::vector<Real> precondition_temp(pre_condition.size(), 1.0);
         // DiagoLOBPCG<T, Device> lobpcg(precondition_temp.data(), nband, ndim, nmax);
         DiagoLOBPCG<T, Device> lobpcg(pre_condition.data(), nband, ndim, nmax);
+        lobpcg.set_diag_comm(comm_info);
         bool ok = lobpcg.diag(hpsi_func, spsi_func, gen_eig,
             eigenvalue, psi.get_pointer(), ld_psi, tolerance, max_iter);
     }

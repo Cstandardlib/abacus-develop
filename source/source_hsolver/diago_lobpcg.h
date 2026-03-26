@@ -23,8 +23,10 @@
  */
 
 #include "source_hsolver/kernels/bpcg_kernel_op.h"
+#include "source_hsolver/diag_comm_info.h"
 #include <functional>
 #include <complex>
+#include <type_traits>
 
 #include <source_base/macros.h>
 #include <source_base/module_device/types.h>
@@ -154,6 +156,11 @@ public:
         const double tolerance,
         const int max_iter
     );
+
+    /**
+     * @brief Set communicator info for distributed reductions/broadcasts.
+     */
+    void set_diag_comm(const diag_comm_info& comm_info);
     /*
      * psi_in(n_basis, n_band) is copied into
      * evec_(n_dim, n_max)
@@ -242,6 +249,13 @@ private:
     ct::DataType r_type_ = ct::DataType::DT_INVALID;     ///< Real data type identifier
     ct::DataType t_type_ = ct::DataType::DT_INVALID;     ///< T data type identifier
     ct::DeviceType device_type_ = ct::DeviceType::UnKnown; ///< Device type identifier
+
+    // Parallel communication info.
+    int comm_rank_ = 0;
+    int comm_nproc_ = 1;
+#ifdef __MPI
+    MPI_Comm comm_ = MPI_COMM_WORLD;
+#endif
     // Device* ctx_ = nullptr;                                     ///< Device context for kernel operations
                 ///< ctx is nothing but a pointer to the device as arguments in the kernel ops.
 
@@ -442,6 +456,12 @@ private:
     void get_expansion_coeffs(const int len_space, const int len_working,
         const int n_max, const int n_active,
         T *h_red, T *u_x, T *u_p);
+
+    // MPI helpers for reductions/broadcasts on diag communicator.
+    void allreduce_sum_inplace(T* data, const int count);
+    void allreduce_sum_inplace_real(Real* data, const int count);
+    void bcast_inplace(T* data, const int count);
+    void bcast_inplace_real(Real* data, const int count);
 
     /**
      * @brief Update search space indices for next iteration.
