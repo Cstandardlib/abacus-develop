@@ -1066,13 +1066,19 @@ std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 // ==================== Ortho ====================
 
 template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::ortho_local(const int n, const int m, T *x, const int ldx)
+{
+    ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
+    qr(n, m, x, ldx);
+}
+
+template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx)
 {
     ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
     if (this->comm_nproc_ <= 1) {
         // Serial path: ortho by QR.
-        ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
-        qr(n, m, x, ldx);
+        this->ortho_local(n, m, x, ldx);
         ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
         return;
     }
@@ -1249,12 +1255,16 @@ std::cout << "--- ortho_against_y: X - Y * y_coeff ---" << std::endl;
         // syncmem_complex_op()(temp_x.data<T>(), x, n * k);
         gemm_op('N', 'N', n, k, m, neg_one, y_ref, ldy_ref, y_coeff.data<T>(), m, one, x, ldx);
 
-        // Check for linear dependence / collapse
 #if !defined(__CUDA) && !defined(__ROCM)
         Real x_norm_check = 0.0;
-        // Crude L1 norm check to see if vector is numerically zero
-        for(int i=0; i<n*k; ++i) x_norm_check += std::abs(x[i]);
-        
+        for (int col = 0; col < k; ++col) {
+            const T* x_col = x + col * ldx;
+            for (int row = 0; row < n; ++row) {
+                x_norm_check += std::abs(x_col[row]);
+            }
+        }
+        this->allreduce_sum_inplace_real(&x_norm_check, 1);
+
         if (x_norm_check < 1.0e-12) {
 #ifdef DEBUG_ORTHO_Y
             std::cout << "--- ortho_against_y: vector collapsed (norm=" << x_norm_check << "), stop re-orth loop ---" << std::endl;
@@ -1298,6 +1308,67 @@ std::cout << "--- ortho_against_y: loop ortho x ---" << std::endl;
 std ::cout << "--- ortho_against_y: end ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "ortho_against_y");
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::ortho_against_y_local(const int n, const int m, const int k, T *x, const int ldx, const T *y, const int ldy)
+{
+    const Real tol_ortho = 1.0e-10;
+
+    ct::Tensor y_ortho(t_type_, device_type_, {n, m});
+    syncmem_complex_2d_op()(y_ortho.data<T>(), n, y, ldy, n, m);
+    this->ortho_local(n, m, y_ortho.data<T>(), n);
+    const T* y_ref = y_ortho.data<T>();
+    const int ldy_ref = n;
+
+    this->ortho_local(n, k, x, ldx);
+
+    ct::Tensor ybx(t_type_, device_type_, {m, k});
+    ct::Tensor y_coeff(t_type_, device_type_, {m, k});
+    ct::Tensor overlap(t_type_, device_type_, {m, k});
+
+    Real norm_overlap = 10.0;
+    const int ITER_MAX = 10;
+    int iter_cnt = ITER_MAX;
+
+    while (norm_overlap >= tol_ortho && iter_cnt > 0) {
+        gemm_op('C', 'N', m, k, n, one, y_ref, ldy_ref, x, ldx, zero, ybx.data<T>(), m);
+        syncmem_complex_op()(y_coeff.data<T>(), ybx.data<T>(), m * k);
+        gemm_op('N', 'N', n, k, m, neg_one, y_ref, ldy_ref, y_coeff.data<T>(), m, one, x, ldx);
+
+#if !defined(__CUDA) && !defined(__ROCM)
+        Real x_norm_check = 0.0;
+        for (int col = 0; col < k; ++col) {
+            const T* x_col = x + col * ldx;
+            for (int row = 0; row < n; ++row) {
+                x_norm_check += std::abs(x_col[row]);
+            }
+        }
+        if (x_norm_check < 1.0e-12) {
+            break;
+        }
+#endif
+
+        this->ortho_local(n, k, x, ldx);
+
+        gemm_op('C', 'N', m, k, n, one, y_ref, ldy_ref, x, ldx, zero, overlap.data<T>(), m);
+
+        norm_overlap = 0.0;
+#if defined(__CUDA) || defined(__ROCM)
+        norm_overlap = 0.0;
+#else
+        T* overlap_data = overlap.data<T>();
+        for (int i = 0; i < m * k; ++i) {
+            norm_overlap += std::norm(overlap_data[i]);
+        }
+        norm_overlap = std::sqrt(norm_overlap);
+#endif
+        --iter_cnt;
+    }
+
+    if (iter_cnt <= 0) {
+        std::cerr << "Too many iterations in ortho_against_y_local. Failed to reach tolerance." << std::endl;
+    }
 }
 
 template <typename T, typename Device>
@@ -1357,7 +1428,10 @@ std::cout << "--- get_expansion_coeffs: ortho ---" << std::endl;
 // std::cout << "u_x = " << u_x << std::endl;
 // std::cout << "u_p = " << u_p << std::endl;
 #endif
-    ortho_against_y(len_working, n_max, n_active, u_p, ld_u_p, u_x, ld_u_x);
+    // u_x/u_p are replicated dense coefficient matrices, not row-distributed
+    // wavefunction blocks. Orthogonalize them locally; using MPI reductions here
+    // would count the same coefficients once per rank and distort P.
+    ortho_against_y_local(len_working, n_max, n_active, u_p, ld_u_p, u_x, ld_u_x);
 #ifdef DEBUG_LOBPCG
 std::cout << "--- get_expansion_coeffs: end ---" << std::endl;
 #endif

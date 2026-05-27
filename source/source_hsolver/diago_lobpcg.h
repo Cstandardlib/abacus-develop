@@ -346,6 +346,14 @@ private:
 
     // --- orthogonalization procedures ---
     /**
+     * @brief Local QR orthonormalization without MPI reductions.
+     *
+     * This is used for replicated dense coefficient matrices. Distributed
+     * wavefunction blocks must use ortho().
+     */
+    void ortho_local(const int n, const int m, T *x, const int ldx);
+
+    /**
      * @brief Orthonormalize a set of m vectors (of size n) using QR decomposition.
      *
      * Orthogonalize given `x` of shape(n, m) using QR factorization.
@@ -376,6 +384,14 @@ private:
      * @param ldy Leading dimension of the reference matrix.
      */
     void ortho_against_y(int n, int m, int k, T *x, int ldx, const T *y, int ldy);
+
+    /**
+     * @brief Local version of ortho_against_y() without MPI reductions.
+     *
+     * Use only for replicated small dense matrices such as Rayleigh-Ritz
+     * expansion coefficients.
+     */
+    void ortho_against_y_local(int n, int m, int k, T *x, int ldx, const T *y, int ldy);
 
     /**
      * @brief S-orthogonalize vectors for generalized problems.
