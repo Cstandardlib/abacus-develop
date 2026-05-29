@@ -725,7 +725,9 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // --- return ---
 // converged
-            std::cout << "Converged at iteration " << iter << " with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            if (this->comm_rank_ == 0) {
+                std::cout << "Converged at iteration " << iter << " with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            }
             ModuleBase::timer::tick("Diago_LOBPCG", "diag");
             return true;
         }
@@ -744,7 +746,9 @@ std::cout << "--- main loop: 2.6 check active eigenvalues and update blockvector
         if (n_active_ <= 0) {
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
-            std::cout << "Converged at iteration " << iter << " (all locked) with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            if (this->comm_rank_ == 0) {
+                std::cout << "Converged at iteration " << iter << " (all locked) with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            }
             ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
             ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
             ModuleBase::timer::tick("Diago_LOBPCG", "diag");
