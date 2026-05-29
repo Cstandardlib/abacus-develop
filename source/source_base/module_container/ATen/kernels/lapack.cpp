@@ -118,6 +118,8 @@ struct lapack_geqrf_inplace<T, DEVICE_CPU> {
         T *A,
         const int lda)
     {
+        if (m <= 0 || n <= 0) return;
+        if (lda < std::max(1, m)) return;
         // Tensor or vector?
         // 1. tau for storing the Householder reflectors
         // tau should be dimension min(m, n)

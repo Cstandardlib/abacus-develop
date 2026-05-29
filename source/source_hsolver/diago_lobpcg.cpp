@@ -718,6 +718,17 @@ std::cout << "--- main loop: 2.6 check active eigenvalues and update blockvector
         int n_conv = 0; // converged number
         for (int i = 0; i < n_max_; ++i) { if (done_.data<int>()[i]) ++n_conv; }
         n_active_ = n_max_ - n_conv;
+        // All eigenvalues converged but sticky-lock guard prevented early exit above.
+        // Copy best results and return to avoid calling hpsi_func with n_active_=0.
+        if (n_active_ <= 0) {
+            syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
+            copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
+            std::cout << "Converged at iteration " << iter << " (all locked) with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
+            ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
+            ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
+            ModuleBase::timer::tick("Diago_LOBPCG", "diag");
+            return true;
+        }
         // [converged|active X|        P        |      W]
         //           | n_active_ | n_active_ | n_active_
         ind_x_ = n_max_ - n_active_; // [converged | active X]
@@ -1073,6 +1084,7 @@ std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho_local(const int n, const int m, T *x, const int ldx)
 {
+    if (n <= 0 || m <= 0) return;
     ct::kernels::lapack_geqrf_inplace<T, ct_Device> qr;
     qr(n, m, x, ldx);
 }
@@ -1344,6 +1356,7 @@ std ::cout << "--- ortho_against_y: end ---" << std::endl;
 template <typename T, typename Device>
 void DiagoLOBPCG<T, Device>::ortho_against_y_local(const int n, const int m, const int k, T *x, const int ldx, const T *y, const int ldy)
 {
+    if (k <= 0) return;
     const Real tol_ortho = 1.0e-10;
 
     ct::Tensor y_ortho(t_type_, device_type_, {n, m});
@@ -1408,6 +1421,10 @@ void DiagoLOBPCG<T, Device>::get_expansion_coeffs(const int len_space, const int
     T *h_red, T *u_x, T *u_p)
 {
     ModuleBase::timer::tick("Diago_LOBPCG", "get_expansion_coeffs");
+    if (n_active <= 0) {
+        ModuleBase::timer::tick("Diago_LOBPCG", "get_expansion_coeffs");
+        return;
+    }
 #ifdef DEBUG_LOBPCG
 std::cout << "--- get_expansion_coeffs: start ---" << std::endl;
 // std::cout << "u_x = " << u_x << std::endl;
