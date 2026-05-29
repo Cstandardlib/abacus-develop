@@ -45,18 +45,6 @@ DiagoLOBPCG<T, Device>::DiagoLOBPCG(
     this->n_dim_ = ndim;
     this->n_max_ = nmax;
 
-    // Guard for very small problems (e.g. unit tests): the LOBPCG search space
-    // [X, P, W] spans 3 * n_max columns and must fit within n_dim, otherwise the
-    // block cannot be orthonormalized to full rank and the reduced Rayleigh-Ritz
-    // problem becomes rank-deficient (observed as non-convergence on the 20x20
-    // readH test). Shrink n_max so that 3 * n_max <= n_dim while keeping at least
-    // n_band vectors. In production plane-wave runs n_dim >> 3 * n_max, so this
-    // clamp never triggers.
-    if (3 * this->n_max_ > this->n_dim_)
-    {
-        this->n_max_ = std::max(this->n_band_, this->n_dim_ / 3);
-    }
-
     // Calculate search space parameters
     this->len_space_ = 3 * n_max_; // Total search space size (3 * n_max_), for [X, P, W]
     this->ind_x_ = 0;
@@ -64,20 +52,27 @@ DiagoLOBPCG<T, Device>::DiagoLOBPCG(
     this->ind_w_ = 2 * n_max_;
     this->n_active_ = n_max_;
 
-    // ----- Allocate memory for all tensors -----
-    // --- mostly on device, and NOT set to zero!
-    // prec: real!
-    // Store reference to preconditioner data (host side)
-    // only a reference, does not own memory!
+    // ----- Preconditioner (depends only on n_dim_, allocated once) -----
+    // Store reference to preconditioner data (host side); only a reference, does
+    // not own memory.
     this->h_prec_ = std::move(ct::TensorMap((void*)precondition, r_type_, device_type_, {n_dim_}));
     // Preconditioner, device side
     this->prec_ = std::move(ct::Tensor(r_type_, device_type_, {n_dim_}));
+    this->prec_.zero();
 
-    // Main search space and matrix-vector products
-    // Eigenvectors of the problem [n_max_]
-    // eig: Real!
+    // ----- Allocate the n_max_ / len_space_ dependent workspace -----
+    // Kept in a re-callable helper: diag() may clamp n_max_ against the global
+    // problem dimension and reallocate.
+    this->allocate_workspace();
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::allocate_workspace()
+{
+    // All tensors whose shape depends on n_max_ / len_space_. Re-callable so that
+    // diag() can resize after clamping n_max_ to the global problem dimension.
+    // Eigenvalues [n_max_] (Real) and eigenvectors [n_dim_, n_max_]
     this->eig_ = std::move(ct::Tensor(r_type_, device_type_, {n_max_}));
-    // Eigenvectors of the problem [n_dim_, n_max_]
     this->evec_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, n_max_}));
 
     // 3 spaces: [X, P, W], H * [X, P, W], S * [X, P, W] (if generalized)
@@ -86,27 +81,18 @@ DiagoLOBPCG<T, Device>::DiagoLOBPCG(
     this->sspace_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, len_space_}));
     // Reduced problem
     this->h_red_ = std::move(ct::Tensor(t_type_, device_type_, {len_space_, len_space_}));
-    // e_red: Real!
     this->e_red_ = std::move(ct::Tensor(r_type_, device_type_, {len_space_}));
 
-    // Temporary storage
+    // Temporary storage for updated Ritz vectors and their products
     this->x_new_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, n_max_}));
     this->hx_new_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, n_max_}));
     this->sx_new_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, n_max_}));
 
-    // Residuals: (R = H*X - λ*S*X)
+    // Residuals (R = H*X - lambda*S*X) and convergence bookkeeping
     this->residual_ = std::move(ct::Tensor(t_type_, device_type_, {n_dim_, n_max_}));
-    // convergence
     this->r_norm_ = std::move(ct::Tensor(r_type_, device_type_, {n_max_})); // 2-norm of vectors, Real
-    this->done_ = std::move(ct::Tensor(ct::DataType::DT_INT, device_type_, {n_max_})); // use int here temporarily for bool
+    this->done_ = std::move(ct::Tensor(ct::DataType::DT_INT, device_type_, {n_max_})); // bool as int
 
-    // Expansion coefficients
-    // u_x_ and u_p_ will be allocated inside iter.
-    // this->u_x_ = std::move(ct::Tensor(t_type_, device_type_, {len_space_, n_max_}));
-    // this->u_p_ = std::move(ct::Tensor(t_type_, device_type_, {len_space_, n_active__})); // maximum size
-
-    // Initialize tensors to zero
-    this->prec_.zero();
     this->eig_.zero();
     this->evec_.zero();
     this->space_.zero();
@@ -114,15 +100,12 @@ DiagoLOBPCG<T, Device>::DiagoLOBPCG(
     this->sspace_.zero();
     this->h_red_.zero();
     this->e_red_.zero();
-
     this->x_new_.zero();
     this->hx_new_.zero();
     this->sx_new_.zero();
-
     this->residual_.zero();
     this->r_norm_.zero();
     this->done_.zero();
-
 }
 
 template <typename T, typename Device>
@@ -239,6 +222,32 @@ bool DiagoLOBPCG<T, Device>::diag(
 {
     ModuleBase::timer::tick("Diago_LOBPCG", "diag");
     ModuleBase::timer::tick("Diago_LOBPCG", "init");
+
+    // Clamp the subspace to the GLOBAL problem dimension. The search space [X,P,W]
+    // spans 3 * n_max columns and must fit within the global dimension, otherwise
+    // it cannot be orthonormalized to full rank and Rayleigh-Ritz becomes rank
+    // deficient (e.g. the 20x20 readH unit test). n_dim_ is the LOCAL row count, so
+    // the global dimension is the MPI sum across the diag communicator -- using the
+    // local n_dim_ would wrongly trigger on highly parallel runs where the local
+    // block is small but the global problem is large. set_diag_comm() has already
+    // run, so the communicator is available here. Production PW runs have
+    // global_dim >> 3 * n_max, so this clamp only fires for tiny systems.
+    int global_dim = this->n_dim_;
+#ifdef __MPI
+    if (this->comm_nproc_ > 1) {
+        MPI_Allreduce(MPI_IN_PLACE, &global_dim, 1, MPI_INT, MPI_SUM, this->comm_);
+    }
+#endif
+    if (3 * this->n_max_ > global_dim) {
+        this->n_max_ = std::max(this->n_band_, global_dim / 3);
+        this->len_space_ = 3 * this->n_max_;
+        this->ind_x_ = 0;
+        this->ind_p_ = this->n_max_;
+        this->ind_w_ = 2 * this->n_max_;
+        this->n_active_ = this->n_max_;
+        this->allocate_workspace();
+    }
+
 #ifdef LOCKING_BY_TRACE
 std::cout << "Using locking by trace." << std::endl;
 #endif

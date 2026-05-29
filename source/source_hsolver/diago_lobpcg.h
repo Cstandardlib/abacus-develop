@@ -481,6 +481,11 @@ private:
         const int n_max, const int n_active,
         T *h_red, T *u_x, T *u_p);
 
+    // Allocate (or reallocate) all tensors whose shape depends on n_max_ /
+    // len_space_. Re-callable so diag() can resize after clamping n_max_ to the
+    // global problem dimension.
+    void allocate_workspace();
+
     // MPI helpers for reductions/broadcasts on diag communicator.
     void allreduce_sum_inplace(T* data, const int count);
     void allreduce_sum_inplace_real(Real* data, const int count);
