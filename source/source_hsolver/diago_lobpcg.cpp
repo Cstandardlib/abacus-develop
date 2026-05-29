@@ -45,6 +45,18 @@ DiagoLOBPCG<T, Device>::DiagoLOBPCG(
     this->n_dim_ = ndim;
     this->n_max_ = nmax;
 
+    // Guard for very small problems (e.g. unit tests): the LOBPCG search space
+    // [X, P, W] spans 3 * n_max columns and must fit within n_dim, otherwise the
+    // block cannot be orthonormalized to full rank and the reduced Rayleigh-Ritz
+    // problem becomes rank-deficient (observed as non-convergence on the 20x20
+    // readH test). Shrink n_max so that 3 * n_max <= n_dim while keeping at least
+    // n_band vectors. In production plane-wave runs n_dim >> 3 * n_max, so this
+    // clamp never triggers.
+    if (3 * this->n_max_ > this->n_dim_)
+    {
+        this->n_max_ = std::max(this->n_band_, this->n_dim_ / 3);
+    }
+
     // Calculate search space parameters
     this->len_space_ = 3 * n_max_; // Total search space size (3 * n_max_), for [X, P, W]
     this->ind_x_ = 0;
