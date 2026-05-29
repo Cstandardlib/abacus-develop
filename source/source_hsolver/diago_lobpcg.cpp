@@ -548,9 +548,14 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
             //     one, sspace_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
             //     zero, sx_new_.data<T>(), n_dim_);
         }
-        // Re-orthogonalize Ritz vectors and refresh HX to avoid drift of subspace orthogonality.
-        this->ortho(n_dim_, n_max_, x_new_.data<T>(), n_dim_);
-        hpsi_func(x_new_.data<T>(), hx_new_.data<T>(), n_dim_, n_max_);
+        // hx_new_ is already H * x_new by linearity when the Ritz vectors stay
+        // orthonormal. Fall back to the old refresh path if that check fails.
+        const bool need_refresh_hx = gen_eig
+            || !this->is_orthonormal(n_dim_, n_max_, x_new_.data<T>(), n_dim_, static_cast<Real>(1.0e-8));
+        if (need_refresh_hx) {
+            this->ortho(n_dim_, n_max_, x_new_.data<T>(), n_dim_);
+            hpsi_func(x_new_.data<T>(), hx_new_.data<T>(), n_dim_, n_max_);
+        }
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // --- 2.4 compute residuals & norms ---
 #ifdef DEBUG_LOBPCG
@@ -1145,6 +1150,32 @@ void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx
     // // Solve U = Q * L^H for Q (orthonormal)
     // ct::kernels::lapack_trtri<T, ct_Device>()('L', 'C', m, overlap.data<T>(), m);
 
+}
+
+template <typename T, typename Device>
+bool DiagoLOBPCG<T, Device>::is_orthonormal(const int n, const int m, const T *x, const int ldx, const Real tol)
+{
+#if defined(__CUDA) || defined(__ROCM)
+    return false;
+#else
+    ct::Tensor gram(t_type_, device_type_, {m, m});
+    gram.zero();
+    gemm_op('C', 'N', m, m, n, one, x, ldx, x, ldx, zero, gram.data<T>(), m);
+    this->allreduce_sum_inplace(gram.data<T>(), m * m);
+
+    const T* gram_data = gram.data<T>();
+    Real max_dev = 0.0;
+    for (int j = 0; j < m; ++j) {
+        for (int i = 0; i < m; ++i) {
+            const T expected = (i == j) ? T(1.0) : T(0.0);
+            const Real dev = std::abs(gram_data[i + j * m] - expected);
+            if (dev > max_dev) {
+                max_dev = dev;
+            }
+        }
+    }
+    return max_dev <= tol;
+#endif
 }
 
 template <typename T, typename Device>

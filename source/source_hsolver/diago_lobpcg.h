@@ -369,6 +369,14 @@ private:
     void ortho(const int n, const int m, T *x, const int ldx);
 
     /**
+     * @brief Check whether a distributed block vector is globally orthonormal.
+     *
+     * Computes X^H X with the diagonalization communicator. Returns false on
+     * unsupported device paths so callers can keep the conservative fallback.
+     */
+    bool is_orthonormal(const int n, const int m, const T *x, const int ldx, const Real tol);
+
+    /**
      * @brief Orthogonalizes block vector `x` against a given \b orthonormal set `y`
      *         and orthonormalizes `x`. If `y` is not orthonormal, extra computation
      *         is needed inside this function.
