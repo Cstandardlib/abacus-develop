@@ -485,6 +485,15 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     std::cout << std::flush;
 #endif
     setmem_int_op()(done_.data<int>(), false, n_max_);
+
+    // Convergence is judged by the eigenvalue change |lambda_i(iter) - lambda_i(iter-1)| <
+    // tolerance, per band, matching dav_subspace/cg. The eigenvector residual converges much
+    // more slowly than the eigenvalue, so the previous residual-norm test made LOBPCG run
+    // roughly twice the inner iterations of Davidson with no SCF-accuracy benefit. eig_prev
+    // holds the previous iteration's Ritz values, seeded from the initial Rayleigh-Ritz.
+    std::vector<Real> eig_prev(n_max_);
+    for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
+
     for (int iter = 0; iter < max_iter; ++iter) {
         ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // #ifdef DEBUG_SCF
@@ -616,6 +625,16 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
 std::cout << "--- main loop: check convergence and locking ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_lock");
+        // Per-band convergence flag: eigenvalue-change criterion (dav_subspace/cg style).
+        // tolerance = diag_thr * lobpcg_tol_scale is reused as the |dlambda| threshold.
+        // Original residual-norm decision kept for reference:
+        //     band_ok[i] = (r_norm_.data<Real>()[i] < tolerance) ? 1 : 0;
+        std::vector<int> band_ok(n_max_, 0);
+        for (int i = 0; i < n_max_; ++i) {
+            band_ok[i] = (std::abs(eig_.data<Real>()[i] - eig_prev[i]) < tolerance) ? 1 : 0;
+        }
+        // Snapshot current eigenvalues for the next iteration's delta.
+        for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
         // --- 2.5 check convergence and locking ---
 #ifdef LOCKING_BY_TRACE
         // LOCKING STRATEGY BY TRACE MINIMIZATION
@@ -669,7 +688,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         // only lock the first converged eigenvalues/vectors
         for(int i = 0; i < n_max_; ++i){
             if (done_.data<int>()[i]) continue; // already locked
-            if (iter > 0 && r_norm_.data<Real>()[i] < tolerance){
+            if (iter > 0 && band_ok[i]){
                 // lock the vector
                 done_.data<int>()[i] = 1;
             }
@@ -693,10 +712,10 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
                 break;
             }
         }
-        // Guard against sticky-lock false positives: require current residuals to satisfy tolerance.
+        // Guard against sticky-lock false positives: require current bands to satisfy the criterion.
         if (all_converged) {
             for (int i = 0; i < n_band_; ++i) {
-                if (r_norm_.data<Real>()[i] >= tolerance) {
+                if (!band_ok[i]) {
                     all_converged = false;
                     break;
                 }
