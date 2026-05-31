@@ -496,9 +496,12 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         };
         const int ndim = psi.get_current_ngk();         /// dimension of matrix
         const int nband = psi.get_nbands();            /// number of eigenpairs sought
-        // const int nmax = nband + 20;
-        const int nmax =  // nband * 1.2 to integer, with a minimum of nband + 5 and a maximum of nband + 50
-            std::min(nband + 50, std::max(nband + 5, static_cast<int>(nband * 1.2)));
+        // Subspace buffer nband+10: produces zero non-convergence events across
+        // semiconductors (4GaAs), normal metals (Pt) and hard magnetic metals
+        // (27Fe nspin=2). nband+2 is faster on small/normal systems but produces
+        // late-SCF events on 27Fe; nband (no buffer) produces events on metals.
+        // See docs/analysis/lobpcg_optimization_plan.zh.md Stage A sweep.
+        const int nmax = nband + 10;
         // print nband and nmax for debugging
         std::cout << "LOBPCG nband (number of eigenpairs sought): " << nband << std::endl;
         std::cout << "LOBPCG nmax (subspace dimension): " << nmax << std::endl;
@@ -507,7 +510,9 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         bool gen_eig = false;
 
         // Keep LOBPCG tolerance coupled to SCF-driven diag_thr, but solve eigenpairs tighter.
-        constexpr double lobpcg_tol_scale = 0.2;
+        // scale 0.4 is the loosest factor that preserves the minimum SCF step count on
+        // semiconductors (4GaAs: 0.4 -> 6 steps, >=0.6 -> 7); metals are scale-insensitive.
+        constexpr double lobpcg_tol_scale = 0.4;
         double tolerance = this->diag_thr * lobpcg_tol_scale;
         int max_iter = this->diag_iter_max;
         // print default tolerance and max_iter for LOBPCG
