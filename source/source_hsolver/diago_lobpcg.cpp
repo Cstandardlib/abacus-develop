@@ -919,7 +919,10 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
 // --- return---
 // fail: too many
         if(iter >= max_iter-1){
-            std::cerr << "LOBPCG did not converge within " << max_iter << " iterations." << std::endl;
+            if (this->comm_rank_ == 0)
+            {
+                std::cerr << "LOBPCG did not converge within " << max_iter << " iterations." << std::endl;
+            }
             // Return best available results so far
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
@@ -961,7 +964,10 @@ void DiagoLOBPCG<T, Device>::check_init_guess(const int n, const int m, T *x, co
     // if zero, generate random guess
     if (x == nullptr || ldx == 0) {
         // warn that no initial guess provided, and quit
-        std::cerr << "No initial guess provided. Quitting." << std::endl;
+        if (this->comm_rank_ == 0)
+        {
+            std::cerr << "No initial guess provided. Quitting." << std::endl;
+        }
         exit(1);
     }
 #if defined(__CUDA) || defined(__ROCM)
@@ -1407,7 +1413,7 @@ std::cout << "--- ortho_against_y: loop ortho x ---" << std::endl;
         --iter_cnt;
     }
 
-    if (iter_cnt <= 0) {
+    if (iter_cnt <= 0 && this->comm_rank_ == 0) {
         // Too many ortho iterations, exit with warning
         std::cerr << "Too many iterations in ortho_against_y. Failed to reach tolerance." << std::endl;
     }
@@ -1474,7 +1480,7 @@ void DiagoLOBPCG<T, Device>::ortho_against_y_local(const int n, const int m, con
         --iter_cnt;
     }
 
-    if (iter_cnt <= 0) {
+    if (iter_cnt <= 0 && this->comm_rank_ == 0) {
         std::cerr << "Too many iterations in ortho_against_y_local. Failed to reach tolerance." << std::endl;
     }
 }
