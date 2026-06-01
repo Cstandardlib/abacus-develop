@@ -6,6 +6,28 @@
 #include <random>
 #include "source_hsolver/diago_lobpcg.h"
 
+// mock diago_hs_para (Tier 2): this single-process unit test never takes the distributed
+// Rayleigh-Ritz path; the stub (mirroring test_hsolver_pw.cpp) satisfies the linker.
+#ifdef __MPI
+#include <mpi.h>
+#include "source_base/macros.h"
+namespace hsolver {
+template <typename T>
+void diago_hs_para(T* h, T* s, const int lda, const int nband,
+                   typename GetTypeReal<T>::type* const ekb, T* const wfc,
+                   const MPI_Comm& comm, const int diag_subspace, const int block_size)
+{}
+template void diago_hs_para<double>(double*, double*, const int, const int,
+    GetTypeReal<double>::type* const, double* const, const MPI_Comm&, const int, const int);
+template void diago_hs_para<std::complex<double>>(std::complex<double>*, std::complex<double>*, const int, const int,
+    GetTypeReal<std::complex<double>>::type* const, std::complex<double>* const, const MPI_Comm&, const int, const int);
+template void diago_hs_para<float>(float*, float*, const int, const int,
+    GetTypeReal<float>::type* const, float* const, const MPI_Comm&, const int, const int);
+template void diago_hs_para<std::complex<float>>(std::complex<float>*, std::complex<float>*, const int, const int,
+    GetTypeReal<std::complex<float>>::type* const, std::complex<float>* const, const MPI_Comm&, const int, const int);
+}
+#endif
+
 // Define complex double type
 using Complex = std::complex<double>;
 

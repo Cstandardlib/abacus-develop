@@ -14,6 +14,7 @@
 #include <source_base/module_container/ATen/core/tensor_map.h>
 
 #include <source_hsolver/kernels/bpcg_kernel_op.h> // normalize_op, precondition_op, apply_eigenvalues_op
+#include <source_hsolver/diag_hs_para.h>           // diago_hs_para (distributed RR, Tier 2)
 #ifdef __MPI
 #include <mpi.h>
 #endif
@@ -126,6 +127,17 @@ void DiagoLOBPCG<T, Device>::set_diag_comm(const diag_comm_info& comm_info)
 #ifdef __MPI
     this->comm_ = comm_info.comm;
 #endif
+}
+
+template <typename T, typename Device>
+void DiagoLOBPCG<T, Device>::set_para_rr(const int method, const int block_size)
+{
+    // Tier 2: route the Rayleigh-Ritz dense eigensolve to the distributed solver
+    // (diago_hs_para, ELPA/ScaLAPACK). method: 0 = serial root-only heevx (default,
+    // production-unchanged), 1 = ELPA, 2 = ScaLAPACK. block_size = 2D block-cyclic
+    // block size (0 => auto). Mirrors the diag_subspace/nb2d parameters dav_subspace uses.
+    this->para_rr_method_ = method;
+    this->para_rr_bs_ = block_size;
 }
 
 template <typename T, typename Device>
@@ -376,14 +388,14 @@ std::cout << "--- First iter Rayleigh-Ritz ---" << std::endl;
     // evec_(n_dim_, n_max_) = space_(n_dim_, n_max_) * h_red_(n_max_, n_max_)
     // space_(n_dim_, n_max_) = evec_(n_dim_, n_max_)
     gemm_op('N', 'N', n_dim_, n_max_, n_max_,
-        one, space_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
+        one, space_.data<T>(), n_dim_, h_red_.data<T>(), n_max_,
         zero, evec_.data<T>(), n_dim_);
     // space_(n_dim_, n_max_) = evec_(n_dim_, n_max_)
     copy_op(n_dim_*n_max_, evec_.data<T>(), 1, space_.data<T>(), 1);
     // evec_ = hspace_ * h_red_
     // evec_(n_dim_, n_max_) = hspace_(n_dim_, n_max_) * h_red_(n_max_, n_max_)
     gemm_op('N', 'N', n_dim_, n_max_, n_max_,
-        one, hspace_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
+        one, hspace_.data<T>(), n_dim_, h_red_.data<T>(), n_max_,
         zero, evec_.data<T>(), n_dim_);
     // hspace_(n_dim_, n_max_) = evec_(n_dim_, n_max_)
     copy_op(n_dim_*n_max_, evec_.data<T>(), 1, hspace_.data<T>(), 1);
@@ -596,11 +608,11 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // x_new_(active) = space(active subspace) * h_red ; locked X frozen under hard locking
         gemm_op('N', 'N', n_dim_, upd_n_, rr_dim_,
-            one, space_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), len_space_,
+            one, space_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), rr_dim_,
             zero, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
         // hx_new_(active) = hspace(active subspace) * h_red
         gemm_op('N', 'N', n_dim_, upd_n_, rr_dim_,
-            one, hspace_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), len_space_,
+            one, hspace_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), rr_dim_,
             zero, hx_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
         if (gen_eig) {
             // sx_new_ = sspace * h_red
@@ -852,7 +864,9 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
         // (active X is first in [active X | P | W]); soft: x_in_sub_ = n_max_, offset_x = n_conv.
         u_x_ = std::move(ct::Tensor(t_type_, device_type_, {rr_dim_, x_in_sub_}));
         u_p_ = std::move(ct::Tensor(t_type_, device_type_, {rr_dim_, n_active_})); // maximum size
-        this->get_expansion_coeffs(len_space_, rr_dim_, x_in_sub_, n_active_,
+        // h_red is now contiguous with leading dimension rr_dim_ (Scheme A), so the
+        // expansion-coefficient extraction reads it with ld_h_red = rr_dim_.
+        this->get_expansion_coeffs(rr_dim_, rr_dim_, x_in_sub_, n_active_,
             h_red_.data<T>(), u_x_.data<T>(), u_p_.data<T>());
 
         // p: space block [u P w]
@@ -1134,7 +1148,9 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
      * DATA LAYOUT
      * INPUT space, aspace (dim, len_space) | use (dim * len_working) block
      * OUTPUT h_red, e_red to store eigenvectors / eigenvalues
-     * h_red(len_space, len_space), use (len_working, len_working) block
+     * h_red is stored CONTIGUOUSLY as a (len_working, len_working) matrix (ld = len_working),
+     * occupying the front of the (len_space, len_space) buffer. The len_space argument is
+     * the physical buffer capacity and is no longer used as the reduced-matrix stride.
      *
      * This function performs the following steps:
      * 1. Calculate the reduced matrix h_red = space^T * hspace, where hspace = H*space is given
@@ -1147,23 +1163,49 @@ void DiagoLOBPCG<T, Device>::rayleigh_ritz(
 #ifdef DEBUG_RR
     std::cout << "--- INNER Rayleigh-Ritz: calculate h_red = space^T * hspace ---" << std::endl;
 #endif
-    setmem_complex_op()(h_red, T(0.0), len_space * len_space);
-    gemm_op('C', 'N', len_working, len_working, dim, one, space, dim, hspace, dim, zero, h_red, len_space);
-    this->allreduce_sum_inplace(h_red, len_space * len_space);
-    // now h_red is the reduced matrix
+    // Scheme A (Tier 2): store the reduced matrix contiguously with leading dimension
+    // len_working (= rr_dim_), not the full len_space (= 3*nmax) buffer stride. This
+    // shrinks the reduce/broadcast volume to len_working^2 and, crucially, leaves h_red
+    // as a dense len_working x len_working matrix the distributed solver can consume
+    // directly. Downstream readers of h_red use leading dimension len_working to match.
+    setmem_complex_op()(h_red, T(0.0), len_working * len_working);
+    gemm_op('C', 'N', len_working, len_working, dim, one, space, dim, hspace, dim, zero, h_red, len_working);
+    this->allreduce_sum_inplace(h_red, len_working * len_working);
+    // now h_red is the reduced matrix (contiguous, ld = len_working), replicated on all ranks
     //
-    // 2. Perform the Rayleigh-Ritz procedure to find the eigenvalues and eigenvectors of h_red
-    // use heevx for solving all len_working eigenpairs of h_red
-    // void operator()(const int dim, const int lda,const T *Mat, const int neig, Real *eigen_val, T *eigen_vec);
-    // h_red(len_space, len_space), ld = len_space, n = len_working, solve len_working eigenpairs
+    // 2. Solve the reduced standard eigenproblem h_red x = lambda x for all len_working pairs.
 #ifdef DEBUG_RR
 std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
 #endif
-    if (this->comm_rank_ == 0) {
-        heevx(len_working, len_space, h_red, len_working, e_red, h_red);
+#ifdef __MPI
+    if (this->comm_nproc_ > 1 && this->para_rr_method_ > 0) {
+        // Scheme B (Tier 2): distributed dense solve via diago_hs_para (ELPA/ScaLAPACK).
+        // diago_hs_para solves the generalized problem H x = lambda S x; the LOBPCG RR
+        // basis is S-orthonormal, so pass S = identity. h_red (contiguous, ld len_working)
+        // is the rank-0 H input; eigenvectors return in wfc (rank-0 replicated) and are
+        // copied back into h_red. The broadcasts below then replicate e_red/h_red.
+        std::vector<T> s_id(static_cast<size_t>(len_working) * len_working, T(0.0));
+        for (int i = 0; i < len_working; ++i) {
+            s_id[static_cast<size_t>(i) * len_working + i] = T(1.0);
+        }
+        std::vector<T> wfc(static_cast<size_t>(len_working) * len_working);
+        hsolver::diago_hs_para<T>(h_red, s_id.data(), len_working, len_working,
+                                  e_red, wfc.data(), this->comm_,
+                                  this->para_rr_method_, this->para_rr_bs_);
+        if (this->comm_rank_ == 0) {
+            std::copy(wfc.begin(), wfc.end(), h_red);
+        }
+    } else
+#endif
+    {
+        // Serial / fallback path: root-only heevx, broadcast to the rest.
+        if (this->comm_rank_ == 0) {
+            heevx(len_working, len_working, h_red, len_working, e_red, h_red);
+        }
     }
     this->bcast_inplace_real(e_red, len_working);
-    this->bcast_inplace(h_red, len_space * len_space);
+    this->bcast_inplace(h_red, len_working * len_working);
+    (void)len_space; // full-buffer stride no longer used for the contiguous reduced matrix
     // heevd(const int dim, T* Mat, const int lda, Real* eigen_val);
     // heevd(len_working, h_red, len_space, e_red);
     // now h_red is overwritten by eigenvectors, e_red for eigenvalues

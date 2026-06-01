@@ -162,6 +162,12 @@ public:
      * @brief Set communicator info for distributed reductions/broadcasts.
      */
     void set_diag_comm(const diag_comm_info& comm_info);
+    /**
+     * @brief Tier 2: select the Rayleigh-Ritz dense eigensolver backend.
+     * @param method 0 = serial root-only heevx (default), 1 = ELPA, 2 = ScaLAPACK.
+     * @param block_size 2D block-cyclic block size for the distributed solve (0 = auto).
+     */
+    void set_para_rr(const int method, const int block_size);
     /*
      * psi_in(n_basis, n_band) is copied into
      * evec_(n_dim, n_max)
@@ -268,6 +274,11 @@ private:
 #ifdef __MPI
     MPI_Comm comm_ = MPI_COMM_WORLD;
 #endif
+    // Tier 2: distributed Rayleigh-Ritz backend (0 = serial root-only heevx, default;
+    // 1 = ELPA, 2 = ScaLAPACK) and 2D block-cyclic block size (0 = auto). Set from the
+    // diag_subspace / nb2d INPUT parameters via set_para_rr().
+    int para_rr_method_ = 0;
+    int para_rr_bs_ = 0;
     // Device* ctx_ = nullptr;                                     ///< Device context for kernel operations
                 ///< ctx is nothing but a pointer to the device as arguments in the kernel ops.
 

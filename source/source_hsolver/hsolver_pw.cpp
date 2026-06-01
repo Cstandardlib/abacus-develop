@@ -543,6 +543,10 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         }
         DiagoLOBPCG<T, Device> lobpcg(pre_condition.data(), nband, ndim, nmax);
         lobpcg.set_diag_comm(comm_info);
+        // Tier 2: route the Rayleigh-Ritz dense eigensolve through the distributed solver
+        // (ELPA/ScaLAPACK) using the same INPUT parameters dav_subspace consumes.
+        // diag_subspace == 0 (default) keeps the serial root-only heevx => production unchanged.
+        lobpcg.set_para_rr(PARAM.inp.diag_subspace, PARAM.inp.nb2d);
         bool ok = lobpcg.diag(hpsi_func, spsi_func, gen_eig,
             eigenvalue, psi.get_pointer(), ld_psi, tolerance, max_iter, lobpcg_ethr);
     }
