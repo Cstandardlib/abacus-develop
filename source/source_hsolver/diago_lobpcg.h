@@ -154,7 +154,8 @@ public:
         Real *eigenvalue_in,
         T *psi_in, const int ld_psi_in,
         const double tolerance,
-        const int max_iter
+        const int max_iter,
+        const std::vector<double>& ethr_band = std::vector<double>()
     );
 
     /**

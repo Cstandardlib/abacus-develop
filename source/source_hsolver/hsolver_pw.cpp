@@ -528,10 +528,23 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         // set temporary precondition array to 1
         // std::vector<Real> precondition_temp(pre_condition.size(), 1.0);
         // DiagoLOBPCG<T, Device> lobpcg(precondition_temp.data(), nband, ndim, nmax);
+        // When smooth-ethr is enabled, give LOBPCG the same per-band thresholds the
+        // other PW solvers use (looser for unoccupied/high bands), scaled by
+        // lobpcg_tol_scale: occupied bands keep 0.4*diag_thr, unoccupied relax. This
+        // stops LOBPCG over-converging the low-weight top bands (~12% fewer matvecs
+        // on metals, energy/SCF preserved). Empty when smoothing is off => uniform
+        // scalar tolerance (unchanged legacy behaviour, no staleness).
+        std::vector<double> lobpcg_ethr;
+        if (PARAM.inp.diago_smooth_ethr) {
+            lobpcg_ethr.resize(this->ethr_band.size());
+            for (size_t ib = 0; ib < lobpcg_ethr.size(); ++ib) {
+                lobpcg_ethr[ib] = this->ethr_band[ib] * lobpcg_tol_scale;
+            }
+        }
         DiagoLOBPCG<T, Device> lobpcg(pre_condition.data(), nband, ndim, nmax);
         lobpcg.set_diag_comm(comm_info);
         bool ok = lobpcg.diag(hpsi_func, spsi_func, gen_eig,
-            eigenvalue, psi.get_pointer(), ld_psi, tolerance, max_iter);
+            eigenvalue, psi.get_pointer(), ld_psi, tolerance, max_iter, lobpcg_ethr);
     }
     // now print lowest 5 eigenvalues for debugging
     if (this->rank_in_pool == 0)

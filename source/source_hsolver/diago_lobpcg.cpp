@@ -218,7 +218,8 @@ bool DiagoLOBPCG<T, Device>::diag(
     T *psi_in, // psi_in will store the final eigenvectors output
     const int ld_psi_in,// should only be used with psi_in!!! as leading dimension of input/output psi_in
     const double tolerance,
-    const int max_iter)
+    const int max_iter,
+    const std::vector<double>& ethr_band)
 {
     ModuleBase::timer::tick("Diago_LOBPCG", "diag");
     ModuleBase::timer::tick("Diago_LOBPCG", "init");
@@ -501,6 +502,16 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     std::vector<Real> eig_prev(n_max_);
     for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
 
+    // Per-band |dlambda| thresholds (Tier 1 experiment). ethr_band (from
+    // cal_smooth_ethr, looser for unoccupied bands) replaces the scalar tolerance
+    // per band; buffer bands and the empty-vector legacy path fall back to scalar.
+    std::vector<Real> tol_band(n_max_, static_cast<Real>(tolerance));
+    if (!ethr_band.empty()) {
+        for (int i = 0; i < n_band_ && i < static_cast<int>(ethr_band.size()); ++i) {
+            tol_band[i] = static_cast<Real>(ethr_band[i]);
+        }
+    }
+
     for (int iter = 0; iter < max_iter; ++iter) {
         ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // #ifdef DEBUG_SCF
@@ -650,7 +661,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         //     band_ok[i] = (r_norm_.data<Real>()[i] < tolerance) ? 1 : 0;
         std::vector<int> band_ok(n_max_, 0);
         for (int i = 0; i < n_max_; ++i) {
-            band_ok[i] = (std::abs(eig_.data<Real>()[i] - eig_prev[i]) < tolerance) ? 1 : 0;
+            band_ok[i] = (std::abs(eig_.data<Real>()[i] - eig_prev[i]) < tol_band[i]) ? 1 : 0;
         }
         // Snapshot current eigenvalues for the next iteration's delta.
         for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
