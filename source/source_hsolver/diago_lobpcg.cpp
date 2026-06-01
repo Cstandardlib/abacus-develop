@@ -223,6 +223,13 @@ bool DiagoLOBPCG<T, Device>::diag(
     ModuleBase::timer::tick("Diago_LOBPCG", "diag");
     ModuleBase::timer::tick("Diago_LOBPCG", "init");
 
+    // Locking strategy switch (Knyazev 2004). Default soft locking; opt into
+    // classical hard locking for A/B comparison via env LOBPCG_HARD_LOCK=1.
+    if (const char* e = std::getenv("LOBPCG_HARD_LOCK")) { this->hard_lock_ = (std::atoi(e) != 0); }
+    // Per-iteration convergence trace (rank 0): "CONVTRACE iter nconv nband | r_norm[0..nband-1]".
+    // A new iter==0 line marks a new diagonalization call. Default off; numerically inert.
+    const bool conv_trace = (std::getenv("LOBPCG_CONV_TRACE") || std::getenv("DIAG_CONV_TRACE")) && (this->comm_rank_ == 0);
+
     // Clamp the subspace to the GLOBAL problem dimension. The search space [X,P,W]
     // spans 3 * n_max columns and must fit within the global dimension, otherwise
     // it cannot be orthonormalized to full rank and Rayleigh-Ritz becomes rank
@@ -528,6 +535,17 @@ std::cout << "----- end hpsi  -----" << std::endl;
         if(0 == iter) { // first round, no P is constructed yet
             len_working_ = 2 * n_max_;
         }
+        // --- locking mode (soft default / hard via env). ---
+        // Soft: RR spans the whole [locked X | active X | P | W]; all n_max Ritz
+        //   vectors recomputed (locked X improved by RR).
+        // Hard: deflate the n_conv locked X out of the RR; iterate only the active
+        //   contiguous block [active X | P | W] at offset ind_x_, freezing locked X.
+        // ind_x_ == n_conv here. At iter 0 (n_conv==0) both modes coincide.
+        const int rr_off_  = this->hard_lock_ ? ind_x_ : 0;          // RR subspace column offset
+        const int rr_dim_  = len_working_ - rr_off_;                  // soft: len_working_; hard: 3*n_active (2*n_max @iter0)
+        const int upd_off_ = this->hard_lock_ ? ind_x_ : 0;          // first Ritz column updated this iter
+        const int upd_n_   = this->hard_lock_ ? n_active_ : n_max_;   // number of Ritz columns updated
+        const int x_in_sub_= this->hard_lock_ ? n_active_ : n_max_;   // X columns inside the RR subspace
 #ifdef DEBUG_LOBPCG
 std::cout << "->current work size: " << std::endl;
 std::cout << "n_active_: " << n_active_ << std::endl;
@@ -540,7 +558,8 @@ std::cout << "len_working_: " << len_working_ << std::endl;
 std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
-        this->rayleigh_ritz(space_.data<T>(), hspace_.data<T>(), len_space_, n_dim_, len_working_,
+        this->rayleigh_ritz(space_.data<T>() + rr_off_ * n_dim_, hspace_.data<T>() + rr_off_ * n_dim_,
+                len_space_, n_dim_, rr_dim_,
                 h_red_.data<T>(), e_red_.data<Real>());    // now (u, lambda) = (h_red, e_red)
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
 
@@ -556,22 +575,22 @@ std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
         //      return false;
         // }
 #endif
-        // eig_(1:n_max_) = e_red_(1:n_max_)
-        copy_real_op(n_max_, e_red_.data<Real>(), 1, eig_.data<Real>(), 1);
+        // eig_(active) = e_red_(active); locked eigenvalues kept frozen under hard locking.
+        copy_real_op(upd_n_, e_red_.data<Real>(), 1, eig_.data<Real>() + upd_off_, 1);
 
         // --- 2.3 update X, AX and, if required BX ---
 #ifdef DEBUG_LOBPCG
 std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
-        // x_new_ = space * h_red
-        gemm_op('N', 'N', n_dim_, n_max_, len_working_,
-            one, space_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
-            zero, x_new_.data<T>(), n_dim_);
-        // hx_new_ = hspace * h_red
-        gemm_op('N', 'N', n_dim_, n_max_, len_working_,
-            one, hspace_.data<T>(), n_dim_, h_red_.data<T>(), len_space_,
-            zero, hx_new_.data<T>(), n_dim_);
+        // x_new_(active) = space(active subspace) * h_red ; locked X frozen under hard locking
+        gemm_op('N', 'N', n_dim_, upd_n_, rr_dim_,
+            one, space_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), len_space_,
+            zero, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
+        // hx_new_(active) = hspace(active subspace) * h_red
+        gemm_op('N', 'N', n_dim_, upd_n_, rr_dim_,
+            one, hspace_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), len_space_,
+            zero, hx_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
         if (gen_eig) {
             // sx_new_ = sspace * h_red
             // gemm_op('N', 'N', n_dim_, n_max_, len_working_,
@@ -581,10 +600,10 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
         // hx_new_ is already H * x_new by linearity when the Ritz vectors stay
         // orthonormal. Fall back to the old refresh path if that check fails.
         const bool need_refresh_hx = gen_eig
-            || !this->is_orthonormal(n_dim_, n_max_, x_new_.data<T>(), n_dim_, static_cast<Real>(1.0e-8));
+            || !this->is_orthonormal(n_dim_, upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_, static_cast<Real>(1.0e-8));
         if (need_refresh_hx) {
-            this->ortho(n_dim_, n_max_, x_new_.data<T>(), n_dim_);
-            hpsi_func(x_new_.data<T>(), hx_new_.data<T>(), n_dim_, n_max_);
+            this->ortho(n_dim_, upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
+            hpsi_func(x_new_.data<T>() + upd_off_ * n_dim_, hx_new_.data<T>() + upd_off_ * n_dim_, n_dim_, upd_n_);
         }
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // --- 2.4 compute residuals & norms ---
@@ -592,10 +611,10 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
 std::cout << "--- main loop: residuals & norms ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_residual");
-        // residual_ = hx_new
-        copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, residual_.data<T>(), 1);
-        // loop over eigenpairs
-        for(int i = 0; i < n_max_; i++) {
+        // residual_ = hx_new (active block only; locked residuals stay frozen under hard locking)
+        copy_op(n_dim_ * upd_n_, hx_new_.data<T>() + upd_off_ * n_dim_, 1, residual_.data<T>() + upd_off_ * n_dim_, 1);
+        // loop over updated eigenpairs [upd_off_, upd_off_ + upd_n_)
+        for(int i = upd_off_; i < upd_off_ + upd_n_; i++) {
             // compute residual, residual <- Hx - eig x  | or | Hx - eig S x
             T *r_col = residual_.data<T>() + i * n_dim_;
             const Real lambda = eig_.data<Real>()[i];
@@ -613,8 +632,8 @@ std::cout << "--- main loop: residuals & norms ---" << std::endl;
             const Real local_norm = nrm2_op(n_dim_, r_col, 1);
             r_norm_.data<Real>()[i] = local_norm * local_norm;
         }
-        this->allreduce_sum_inplace_real(r_norm_.data<Real>(), n_max_);
-        for (int i = 0; i < n_max_; ++i) {
+        this->allreduce_sum_inplace_real(r_norm_.data<Real>() + upd_off_, upd_n_);
+        for (int i = upd_off_; i < upd_off_ + upd_n_; ++i) {
             r_norm_.data<Real>()[i] = std::sqrt(r_norm_.data<Real>()[i]) * inv_sqrt_global_dim;
         }
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_residual");
@@ -702,6 +721,16 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             }
         }
 #endif
+        // --- per-iteration convergence trace (rank 0, env-gated, numerically inert) ---
+        if (conv_trace) {
+            int nconv_tr = 0;
+            for (int i = 0; i < n_band_; ++i) { if (done_.data<int>()[i]) ++nconv_tr; }
+            std::cout << "CONVTRACE " << iter << " " << nconv_tr << " " << n_band_ << " |";
+            for (int i = 0; i < n_band_; ++i) { std::cout << " " << r_norm_.data<Real>()[i]; }
+            std::cout << " |";   // eigenvalues, so |dlambda| (the locking criterion) can be plotted
+            for (int i = 0; i < n_band_; ++i) { std::cout << " " << eig_.data<Real>()[i]; }
+            std::cout << std::endl;
+        }
 // --- check overall convergence ---
         bool all_converged = true;
         // only count n_band_ instead of n_max_
@@ -807,28 +836,27 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
                 corresponding coeff block(n_max_subspace-n_active, n_max_subspace-n_active,n_active,n_active)
         */
 
-        u_x_ = std::move(ct::Tensor(t_type_, device_type_, {len_working_, n_max_}));
-        u_p_ = std::move(ct::Tensor(t_type_, device_type_, {len_working_, n_active_})); // maximum size
-        // ct::Tensor u_x_(t_type_, device_type_, {len_working_, n_max_});
-        // ct::Tensor u_p_(t_type_, device_type_, {len_working_, n_active_});
-// std::cout << "u_x_ = " << u_x_.data() << std::endl;
-// std::cout << "u_p_ = " << u_p_.data() << std::endl;
-        this->get_expansion_coeffs(len_space_, len_working_,n_max_, n_active_,
+        // Coefficients live in the RR subspace: rr_dim_ rows, x_in_sub_ X-columns.
+        // Hard locking: x_in_sub_ = n_active_ so get_expansion_coeffs' offset_x = 0
+        // (active X is first in [active X | P | W]); soft: x_in_sub_ = n_max_, offset_x = n_conv.
+        u_x_ = std::move(ct::Tensor(t_type_, device_type_, {rr_dim_, x_in_sub_}));
+        u_p_ = std::move(ct::Tensor(t_type_, device_type_, {rr_dim_, n_active_})); // maximum size
+        this->get_expansion_coeffs(len_space_, rr_dim_, x_in_sub_, n_active_,
             h_red_.data<T>(), u_x_.data<T>(), u_p_.data<T>());
 
         // p: space block [u P w]
         // p = space * u_p
         // hp = hspace * u_p
         // sp = sspace * u_p
-        gemm_op('N', 'N', n_dim_, n_active_, len_working_,
-            one, space_.data<T>(), n_dim_, u_p_.data<T>(), len_working_, zero, evec_.data<T>(), n_dim_);
+        gemm_op('N', 'N', n_dim_, n_active_, rr_dim_,
+            one, space_.data<T>() + rr_off_ * n_dim_, n_dim_, u_p_.data<T>(), rr_dim_, zero, evec_.data<T>(), n_dim_);
         copy_op(n_dim_*n_active_, evec_.data<T>(), 1, space_.data<T>() + ind_p_ * n_dim_, 1);
-        gemm_op('N', 'N', n_dim_, n_active_, len_working_,
-            one, hspace_.data<T>(), n_dim_, u_p_.data<T>(), len_working_, zero, evec_.data<T>(), n_dim_);
+        gemm_op('N', 'N', n_dim_, n_active_, rr_dim_,
+            one, hspace_.data<T>() + rr_off_ * n_dim_, n_dim_, u_p_.data<T>(), rr_dim_, zero, evec_.data<T>(), n_dim_);
         copy_op(n_dim_*n_active_, evec_.data<T>(), 1, hspace_.data<T>() + ind_p_ * n_dim_, 1);
         if(gen_eig){
-            gemm_op('N', 'N', n_dim_, n_active_, len_working_,
-                one, sspace_.data<T>(), n_dim_, u_p_.data<T>(), len_working_, zero, evec_.data<T>(), n_dim_);
+            gemm_op('N', 'N', n_dim_, n_active_, rr_dim_,
+                one, sspace_.data<T>() + rr_off_ * n_dim_, n_dim_, u_p_.data<T>(), rr_dim_, zero, evec_.data<T>(), n_dim_);
             copy_op(n_dim_*n_active_, evec_.data<T>(), 1, sspace_.data<T>() + ind_p_ * n_dim_, 1);
         }
 
@@ -838,9 +866,11 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
 #endif
         // --- 2.7 update corresponding space from X, P, W ---
         //
-        // move x_new, hx_new, sx_new to space_, hspace_, sspace_
-        copy_op(n_dim_*n_max_, x_new_.data<T>(), 1, space_.data<T>(), 1);
-        copy_op(n_dim_*n_max_, hx_new_.data<T>(), 1, hspace_.data<T>(), 1);
+        // move updated Ritz vectors back into the search space. Under hard locking
+        // only the active block [upd_off_, upd_off_+upd_n_) is written, leaving the
+        // frozen locked X in space_[0, upd_off_) untouched. Soft locking writes all n_max.
+        copy_op(n_dim_*upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, 1, space_.data<T>() + upd_off_ * n_dim_, 1);
+        copy_op(n_dim_*upd_n_, hx_new_.data<T>() + upd_off_ * n_dim_, 1, hspace_.data<T>() + upd_off_ * n_dim_, 1);
         if(gen_eig){
             // copy_op(n_dim_*n_max_, sx_new_.data<T>(), 1, sspace_.data<T>(), 1);
         }

@@ -191,6 +191,17 @@ private:
     int len_space_ = 0;  ///< Total search space size (3 * n_max)
     int len_working_ = 0; ///< working search space size (n_max + 2 * n_active)
 
+    // Locking strategy (Knyazev, "Hard and soft locking", Copper Mountain 2004).
+    // true (default) = classical hard locking: locked X is deflated out of the
+    //   Rayleigh-Ritz (kept only orthogonal via ortho_against_y) and frozen, so
+    //   RR/x_new/residual shrink to the active block. A 7-system A/B (nband 46-518)
+    //   showed it converges to the same SCF energy and is faster for nband >~ 80
+    //   (up to -25% diag on 216Si), with a small penalty only on tiny semiconductors.
+    // false = soft locking: locked X stays in the RR and is re-improved each
+    //   iteration (more accurate, more expensive; safest for small systems).
+    // Override at runtime via env LOBPCG_HARD_LOCK (0 = soft, 1 = hard); both kept.
+    bool hard_lock_ = true;
+
     // Convergence control
     int n_active_ = 0;   ///< Number of active (non-converged) eigenvectors
     Real tol_rms_ = 1e-6; ///< RMS residual tolerance
