@@ -213,6 +213,14 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
             eigenvalue_in_hsolver[m] = eigenvalue_iter[m];
         }
 
+        // Per-iteration eigenvalue trace (rank 0, env-gated) for cross-solver comparison.
+        // "DAVSUBTRACE iter nconv nband | e0..eN"; new iter==1 marks a new diagonalization.
+        if (std::getenv("DIAG_CONV_TRACE") && this->diag_comm.rank == 0) {
+            std::cout << "DAVSUBTRACE " << dav_iter << " " << (this->n_band - this->notconv) << " " << this->n_band << " |";
+            for (int m = 0; m < this->n_band; ++m) { std::cout << " " << eigenvalue_iter[m]; }
+            std::cout << std::endl;
+        }
+
         ModuleBase::timer::tick("Diago_DavSubspace", "check_update");
 
         if ((this->notconv == 0) || (nbase + this->notconv + 1 > this->nbase_x) || (dav_iter == this->iter_nmax))

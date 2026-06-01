@@ -232,6 +232,14 @@ int DiagoDavid<T, Device>::diag_once(const HPsiFunc& hpsi_func,
             eigenvalue_in[m] = this->eigenvalue[m];
         }
 
+        // Per-iteration eigenvalue trace (rank 0, env-gated) for cross-solver comparison.
+        // "DAVTRACE iter nconv nband | e0..eN"; new iter==1 marks a new diagonalization.
+        if (std::getenv("DIAG_CONV_TRACE") && this->diag_comm.rank == 0) {
+            std::cout << "DAVTRACE " << dav_iter << " " << (nband - this->notconv) << " " << nband << " |";
+            for (int m = 0; m < nband; ++m) { std::cout << " " << this->eigenvalue[m]; }
+            std::cout << std::endl;
+        }
+
         ModuleBase::timer::tick("DiagoDavid", "check_update");
         if (!this->notconv || (nbase + this->notconv > nbase_x)
             || (dav_iter == david_maxiter))
