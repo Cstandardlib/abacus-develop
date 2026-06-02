@@ -61,6 +61,11 @@ if (ENABLE_MPI)
     LIBS parameter  ${math_libs} base psi device container
     SOURCES diago_lobpcg_simple_test.cpp ../diago_lobpcg.cpp ../diago_iter_assist.cpp ../diag_const_nums.cpp
   )
+  AddTest(
+    TARGET MODULE_HSOLVER_lobpcg_locking
+    LIBS parameter  ${math_libs} base device
+    SOURCES diago_lobpcg_locking_test.cpp
+  )
 
   configure_file(H-small-3x3.dat ${CMAKE_CURRENT_BINARY_DIR}/H-small-3x3.dat COPYONLY)
   configure_file(H-small-20x20.dat ${CMAKE_CURRENT_BINARY_DIR}/H-small-20x20.dat COPYONLY)
