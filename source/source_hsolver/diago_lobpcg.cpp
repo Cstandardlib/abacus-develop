@@ -4,7 +4,8 @@
 #include <cmath>  // std::sqrt
 #include <fstream>
 #include <iostream>
-#include <iomanip> 
+#include <iomanip>
+#include <chrono>  // per-iter timing trace (non-MPI wall-clock fallback)
 
 #include <source_base/kernels/math_kernel_op.h>
 #include <source_base/timer.h>
@@ -242,6 +243,39 @@ bool DiagoLOBPCG<T, Device>::diag(
     // Per-iteration convergence trace (rank 0): "CONVTRACE iter nconv nband | r_norm[0..nband-1]".
     // A new iter==0 line marks a new diagonalization call. Default off; numerically inert.
     const bool conv_trace = (std::getenv("LOBPCG_CONV_TRACE") || std::getenv("DIAG_CONV_TRACE")) && (this->comm_rank_ == 0);
+    // Convergence-criterion switch (experiment, Tier 3 study). Default = eigenvalue-change
+    // |dlambda|<tol (commit 762a3141b, matches dav_subspace/cg). LOBPCG_CONV_RMS=1 reverts
+    // to the residual-norm criterion r_norm<tol for A/B — to test whether the contested
+    // window-edge band's non-monotonic residual / non-termination is criterion-specific.
+    const bool conv_by_rms = std::getenv("LOBPCG_CONV_RMS") != nullptr;
+    // Subspace-residual convergence (experiment, solution A; see lobpcg_cluster_convergence.md).
+    // When set, accept the last few contested bands of a degenerate edge manifold on the
+    // rotation-invariant subspace residual ||HX - X(X^H H X)||_F (cluster-robust) ONCE the
+    // per-band criterion has already locked all but K sought bands (K = env value, default 8).
+    // This is a SURGICAL TAIL accelerator: applied as a blanket exit it fires at iter 0 (nconv=0)
+    // because the previous-SCF-step subspace is already near-invariant, under-converging every
+    // diagonalization and breaking the SCF; the nconv>=n_band-K gate (below) prevents that.
+    const char* subspace_env = std::getenv("LOBPCG_SUBSPACE_CONV");
+    const bool subspace_conv = subspace_env != nullptr;
+    const int subspace_tail_K = (subspace_env && std::atoi(subspace_env) > 0) ? std::atoi(subspace_env) : 8;
+    // Relax the unoccupied straggler tail (Tier 3). LOBPCG_RELAX_TAIL=K (default 0 = off):
+    // once all but <=K of the sought bands are locked AND those stragglers are the TOP-K bands
+    // (above E_F, unoccupied), accept them and exit. Phase-0 diagnosis (216Si bands 516-517,
+    // 27Fe 284-285) showed the dominant cost is a 38-48 iter stall on exactly this top contested
+    // pair, whose individual eigenvectors are ill-posed (Davis-Kahan). The bands are unoccupied
+    // so their loose state never enters the density/energy (validated by the energy gate). The
+    // position gate (all unconverged in the top-K) avoids relaxing an occupied band.
+    const char* relax_env = std::getenv("LOBPCG_RELAX_TAIL");
+    const int relax_tail_K = (relax_env && std::atoi(relax_env) > 0) ? std::atoi(relax_env) : 0;
+    // Generalized Rayleigh-Ritz (Phase 3): eliminate the explicit block ortho (the measured #1
+    // residual vs dav_subspace) by solving Hcc v = lambda Scc v over the non-orthonormal [X,P,W]
+    // basis. Only active on the distributed RR path (diago_hs_para solves the generalized problem);
+    // np=1 / ds=0 falls back to standard heevx + ortho, so the per-band math is unchanged there.
+    if (const char* e = std::getenv("LOBPCG_GEN_RR")) { this->gen_rr_ = (std::atoi(e) != 0); }
+    this->gen_rr_active_ = this->gen_rr_ && (this->comm_nproc_ > 1 && this->para_rr_method_ > 0);
+    // Cheap CholeskyQR2 orthonormalization (Phase 3b): keep the standard RR but replace the polar
+    // (root-only heevx + broadcast) in ortho() with a local Cholesky. Default off.
+    if (const char* e = std::getenv("LOBPCG_CHOL_ORTHO")) { this->chol_ortho_ = (std::atoi(e) != 0); }
 
     // Clamp the subspace to the GLOBAL problem dimension. The search space [X,P,W]
     // spans 3 * n_max columns and must fit within the global dimension, otherwise
@@ -461,8 +495,11 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
 
     // --- 1.5 orthogonalize W; and then orthonormalize it ---
     if(gen_eig){}
-    // Corrected argument order: normalize W (2nd ptr) against X (1st ptr)
-    ortho_against_y(n_dim_, n_max_, n_max_, space_.data<T>() + ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
+    // Corrected argument order: normalize W (2nd ptr) against X (1st ptr).
+    // Generalized-RR mode skips this -- the basis Gram Scc absorbs the non-orthonormality.
+    if (!this->gen_rr_active_) {
+        ortho_against_y(n_dim_, n_max_, n_max_, space_.data<T>() + ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
+    }
     ModuleBase::timer::tick("Diago_LOBPCG", "first_iter");
 #ifdef DEBUG_LOBPCG
     std::cout << "--- first iter over ---" << std::endl;
@@ -514,6 +551,13 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
     std::vector<Real> eig_prev(n_max_);
     for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
 
+    // Sticky per-band band_ok accumulator (diagnostic, numerically inert). ever_ok[i]=1 once band
+    // i has satisfied the per-band criterion at any iter; independent_nconv = sum over sought
+    // bands. Printed in CONVTRACE next to the cascade nconv so an A/B can show whether independent
+    // (non-contiguous) locking WOULD lock more than the contiguous cascade -- the 216Si ramp
+    // question the 6-digit eigenvalue trace could not resolve. Reset per diag (local to diag()).
+    std::vector<int> ever_ok(n_max_, 0);
+
     // Per-band |dlambda| thresholds (Tier 1 experiment). ethr_band (from
     // cal_smooth_ethr, looser for unoccupied bands) replaces the scalar tolerance
     // per band; buffer bands and the empty-vector legacy path fall back to scalar.
@@ -524,8 +568,32 @@ std::cout << "--- first iter: preconditioned residuals ---" << std::endl;
         }
     }
 
+    // --- per-iteration timing trace (rank-0, emitted only when conv_trace; numerically inert) ---
+    // Wall-clock helper matching ModuleBase::timer (MPI_Wtime under MPI, else steady_clock).
+    auto lbtime_wt = []() -> double {
+#ifdef __MPI
+        return MPI_Wtime();
+#else
+        return std::chrono::duration<double>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+    };
+    // Per-iter accumulators (reset each iteration). One LBTIME line per iteration:
+    //   LBTIME iter nconv nband n_active n_max subspace_dim rr_dim
+    //          t_hpsi t_rr t_updatex t_updatespace t_orthoy t_total      (all seconds)
+    // n_active = hpsi_width (W block this iter); subspace_dim = len_working_; rr_dim = RR dim this iter.
+    // t_orthoy is the [X,P,W] block ortho and is a SUBSET of t_updatespace; so the plan's
+    // t_ortho = t_orthoy and t_updateXPW(excl. ortho) = t_updatex + t_updatespace - t_orthoy.
+    double t_hpsi_it = 0.0, t_rr_it = 0.0, t_updx_it = 0.0, t_upds_it = 0.0, t_orthoy_it = 0.0;
+    double t_total_t0 = 0.0, _lb_t0 = 0.0, _lb_oy0 = 0.0;
+    int n_active_iter = 0;
+
     for (int iter = 0; iter < max_iter; ++iter) {
         ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
+        // reset per-iter timing; snapshot n_active_ BEFORE it is reassigned in update_space.
+        t_hpsi_it = t_rr_it = t_updx_it = t_upds_it = t_orthoy_it = 0.0;
+        t_total_t0 = lbtime_wt();
+        n_active_iter = this->n_active_;
 // #ifdef DEBUG_SCF
 // std::cout << "----- LOBPCG main loop: iter " << iter << " -----" << std::endl;
 // #endif
@@ -548,7 +616,9 @@ std::cout << "ind_w_: " << ind_w_ << std::endl;
 std::cout << "n_active_: " << n_active_ << std::endl;
 #endif        
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_hpsi");
+        _lb_t0 = lbtime_wt();
         hpsi_func(space_.data<T>() + n_dim_ * ind_w_, hspace_.data<T>() + n_dim_ * ind_w_, n_dim_, n_active_);
+        t_hpsi_it += lbtime_wt() - _lb_t0;
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_hpsi");
         // --- 2.2 construct the reduced matrix and diagonalization ---
 #ifdef DEBUG_LOBPCG
@@ -569,6 +639,18 @@ std::cout << "----- end hpsi  -----" << std::endl;
         const int upd_off_ = this->hard_lock_ ? ind_x_ : 0;          // first Ritz column updated this iter
         const int upd_n_   = this->hard_lock_ ? n_active_ : n_max_;   // number of Ritz columns updated
         const int x_in_sub_= this->hard_lock_ ? n_active_ : n_max_;   // X columns inside the RR subspace
+        // Emit one per-iteration timing record. Called at every loop-exit point so each
+        // iteration is recorded exactly once (rr_dim_, n_active_iter, len_working_ in scope here).
+        auto lbtime_emit = [&](int it) {
+            if (!conv_trace) { return; }
+            int nconv_e = 0;
+            for (int i = 0; i < n_band_; ++i) { if (done_.data<int>()[i]) { ++nconv_e; } }
+            const double t_total_it = lbtime_wt() - t_total_t0;
+            std::cout << "LBTIME " << it << " " << nconv_e << " " << n_band_ << " "
+                      << n_active_iter << " " << n_max_ << " " << len_working_ << " " << rr_dim_
+                      << " " << t_hpsi_it << " " << t_rr_it << " " << t_updx_it << " "
+                      << t_upds_it << " " << t_orthoy_it << " " << t_total_it << std::endl;
+        };
 #ifdef DEBUG_LOBPCG
 std::cout << "->current work size: " << std::endl;
 std::cout << "n_active_: " << n_active_ << std::endl;
@@ -581,9 +663,11 @@ std::cout << "len_working_: " << len_working_ << std::endl;
 std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
+        _lb_t0 = lbtime_wt();
         this->rayleigh_ritz(space_.data<T>() + rr_off_ * n_dim_, hspace_.data<T>() + rr_off_ * n_dim_,
                 len_space_, n_dim_, rr_dim_,
                 h_red_.data<T>(), e_red_.data<Real>());    // now (u, lambda) = (h_red, e_red)
+        t_rr_it += lbtime_wt() - _lb_t0;
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_rr");
 
 #ifdef DEBUG_LOBPCG
@@ -606,6 +690,7 @@ std::cout << "--- main loop: Rayleigh-Ritz ---" << std::endl;
 std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
+        _lb_t0 = lbtime_wt();
         // x_new_(active) = space(active subspace) * h_red ; locked X frozen under hard locking
         gemm_op('N', 'N', n_dim_, upd_n_, rr_dim_,
             one, space_.data<T>() + rr_off_ * n_dim_, n_dim_, h_red_.data<T>(), rr_dim_,
@@ -622,12 +707,16 @@ std::cout << "--- main loop: update X, AX and, if required BX ---" << std::endl;
         }
         // hx_new_ is already H * x_new by linearity when the Ritz vectors stay
         // orthonormal. Fall back to the old refresh path if that check fails.
+        // In generalized-RR mode the Ritz vectors are Scc-normalized => X^H X = I automatically and
+        // hx_new = hspace * v is exactly H*X by linearity, so no refresh/ortho is needed.
         const bool need_refresh_hx = gen_eig
-            || !this->is_orthonormal(n_dim_, upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_, static_cast<Real>(1.0e-8));
+            || (!this->gen_rr_active_
+                && !this->is_orthonormal(n_dim_, upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_, static_cast<Real>(1.0e-8)));
         if (need_refresh_hx) {
             this->ortho(n_dim_, upd_n_, x_new_.data<T>() + upd_off_ * n_dim_, n_dim_);
             hpsi_func(x_new_.data<T>() + upd_off_ * n_dim_, hx_new_.data<T>() + upd_off_ * n_dim_, n_dim_, upd_n_);
         }
+        t_updx_it += lbtime_wt() - _lb_t0;
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_x");
         // --- 2.4 compute residuals & norms ---
 #ifdef DEBUG_LOBPCG
@@ -673,10 +762,14 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         //     band_ok[i] = (r_norm_.data<Real>()[i] < tolerance) ? 1 : 0;
         std::vector<int> band_ok(n_max_, 0);
         for (int i = 0; i < n_max_; ++i) {
-            band_ok[i] = (std::abs(eig_.data<Real>()[i] - eig_prev[i]) < tol_band[i]) ? 1 : 0;
+            band_ok[i] = conv_by_rms
+                ? ((r_norm_.data<Real>()[i] < tol_band[i]) ? 1 : 0)
+                : ((std::abs(eig_.data<Real>()[i] - eig_prev[i]) < tol_band[i]) ? 1 : 0);
         }
         // Snapshot current eigenvalues for the next iteration's delta.
         for (int i = 0; i < n_max_; ++i) { eig_prev[i] = eig_.data<Real>()[i]; }
+        // Accumulate sticky band_ok (diagnostic: independent-locking nconv vs cascade nconv).
+        for (int i = 0; i < n_max_; ++i) { if (band_ok[i]) { ever_ok[i] = 1; } }
         // --- 2.5 check convergence and locking ---
 #ifdef LOCKING_BY_TRACE
         // LOCKING STRATEGY BY TRACE MINIMIZATION
@@ -748,11 +841,40 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
         if (conv_trace) {
             int nconv_tr = 0;
             for (int i = 0; i < n_band_; ++i) { if (done_.data<int>()[i]) ++nconv_tr; }
-            std::cout << "CONVTRACE " << iter << " " << nconv_tr << " " << n_band_ << " |";
+            // independent_nconv: how many sought bands WOULD be locked under independent (sticky)
+            // per-band locking; equals nconv_tr for the contiguous cascade, exceeds it if a low
+            // band blocks eig-settled higher bands (the ramp question). Printed as field 4.
+            int indep_tr = 0;
+            for (int i = 0; i < n_band_; ++i) { if (ever_ok[i]) ++indep_tr; }
+            std::cout << "CONVTRACE " << iter << " " << nconv_tr << " " << n_band_ << " " << indep_tr << " |";
             for (int i = 0; i < n_band_; ++i) { std::cout << " " << r_norm_.data<Real>()[i]; }
             std::cout << " |";   // eigenvalues, so |dlambda| (the locking criterion) can be plotted
             for (int i = 0; i < n_band_; ++i) { std::cout << " " << eig_.data<Real>()[i]; }
             std::cout << std::endl;
+        }
+        // Subspace-residual convergence (solution A). The rotation-invariant block residual
+        // ||HX - X(X^H H X)||_F over the FULL block (sought + buffer) -> 0 when span(X) is the
+        // invariant subspace, even while individual contested bands of a degenerate manifold
+        // keep rotating (their per-band residual bounces). x_new_/hx_new_ hold all n_max_ Ritz
+        // pairs (locked = frozen-but-valid under fixed H, active = fresh). Normalized to the
+        // per-band RMS scale so it compares against the same `tolerance`.
+        bool subspace_ok = false;
+        if (subspace_conv) {
+            ct::Tensor xhx_sub(t_type_, device_type_, {n_max_, n_max_});
+            ct::Tensor sres_sub(t_type_, device_type_, {n_dim_, n_max_});
+            gemm_op('C', 'N', n_max_, n_max_, n_dim_, one, x_new_.data<T>(), n_dim_,
+                    hx_new_.data<T>(), n_dim_, zero, xhx_sub.data<T>(), n_max_);
+            this->allreduce_sum_inplace(xhx_sub.data<T>(), n_max_ * n_max_);
+            copy_op(n_dim_ * n_max_, hx_new_.data<T>(), 1, sres_sub.data<T>(), 1);
+            gemm_op('N', 'N', n_dim_, n_max_, n_max_, neg_one, x_new_.data<T>(), n_dim_,
+                    xhx_sub.data<T>(), n_max_, one, sres_sub.data<T>(), n_dim_);
+            Real sres_norm = nrm2_op(n_dim_ * n_max_, sres_sub.data<T>(), 1);
+            sres_norm *= sres_norm;
+            this->allreduce_sum_inplace_real(&sres_norm, 1);
+            const Real r_sub = std::sqrt(sres_norm) * inv_sqrt_global_dim
+                               / std::sqrt(static_cast<Real>(n_max_));
+            subspace_ok = (r_sub < static_cast<Real>(tolerance));
+            if (conv_trace) { std::cout << "SUBSPACERES " << iter << " " << r_sub << std::endl; }
         }
 // --- check overall convergence ---
         bool all_converged = true;
@@ -770,6 +892,34 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
                 if (!band_ok[i]) {
                     all_converged = false;
                     break;
+                }
+            }
+        }
+        // Subspace-residual override (solution A), as a TAIL accelerator only: require the
+        // per-band criterion to have locked all but subspace_tail_K sought bands first (so all
+        // occupied + most unoccupied bands are individually converged; the remainder is the
+        // contested top manifold whose individual vectors are ill-posed). This both prevents the
+        // premature iter-0 exit (nconv=0 => fails the gate) and targets exactly the stuck tail.
+        if (subspace_conv && subspace_ok && iter > 0) {
+            int nconv_sought = 0;
+            for (int i = 0; i < n_band_; ++i) { if (done_.data<int>()[i]) ++nconv_sought; }
+            if (n_band_ - nconv_sought <= subspace_tail_K) { all_converged = true; }
+        }
+        // Relax the unoccupied straggler tail (Tier 3 keystone). Accept the top-K contested bands
+        // once they are the ONLY unconverged sought bands: they sit above E_F, so their loose
+        // state is energy-exact, and this caps the cluster stall that otherwise runs to max_iter.
+        // The position gate (lowest unconverged >= n_band_-K) ensures we never relax an occupied
+        // band -- if any lower (occupied) band is unconverged, relax does not fire.
+        if (!all_converged && relax_tail_K > 0 && iter > 0) {
+            int n_unconv = 0, lowest_unconv = n_band_;
+            for (int i = 0; i < n_band_; ++i) {
+                if (!done_.data<int>()[i]) { ++n_unconv; if (i < lowest_unconv) { lowest_unconv = i; } }
+            }
+            if (n_unconv <= relax_tail_K && lowest_unconv >= n_band_ - relax_tail_K) {
+                all_converged = true;
+                if (conv_trace) {
+                    std::cout << "RELAXTAIL " << iter << " accepted " << n_unconv
+                              << " unoccupied top bands (lowest=" << lowest_unconv << ")" << std::endl;
                 }
             }
         }
@@ -792,6 +942,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             // copy eig_ to input eigenvalue_in
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
+            lbtime_emit(iter);   // converging iter: t_updatespace/t_orthoy are 0 (update_space not run)
             ModuleBase::timer::tick("Diago_LOBPCG", "iter_lock");
             ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 // --- return ---
@@ -808,6 +959,7 @@ std::cout << "--- main loop: check convergence and locking ---" << std::endl;
 std::cout << "--- main loop: 2.6 check active eigenvalues and update blockvectors X, P, W ---" << std::endl;
 #endif
     ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
+        _lb_t0 = lbtime_wt();
         // 2.6.1 count active
         int n_conv = 0; // converged number
         for (int i = 0; i < n_max_; ++i) { if (done_.data<int>()[i]) ++n_conv; }
@@ -820,6 +972,8 @@ std::cout << "--- main loop: 2.6 check active eigenvalues and update blockvector
             if (this->comm_rank_ == 0) {
                 std::cout << "Converged at iteration " << iter << " (all locked) with RMS residual " << r_norm_.data<Real>()[0] << std::endl;
             }
+            t_upds_it += lbtime_wt() - _lb_t0;   // partial update_space (exited before W rebuild)
+            lbtime_emit(iter);
             ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
             ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
             ModuleBase::timer::tick("Diago_LOBPCG", "diag");
@@ -922,10 +1076,16 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
         else{
             // [x p] - n_dim_ * (n_max_+n_active_)
             // [w] - n_dim_ * n_active_
-            // Corrected argument order: normalize W (2nd ptr) against X+P (1st ptr)
-            ortho_against_y(n_dim_, n_max_+n_active_, n_active_,
-                space_.data<T>()+ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
+            // Corrected argument order: normalize W (2nd ptr) against X+P (1st ptr).
+            // Generalized-RR mode skips this; Scc = space^H space handles the overlaps.
+            if (!this->gen_rr_active_) {
+                _lb_oy0 = lbtime_wt();
+                ortho_against_y(n_dim_, n_max_+n_active_, n_active_,
+                    space_.data<T>()+ind_w_ * n_dim_, n_dim_, space_.data<T>(), n_dim_);
+                t_orthoy_it += lbtime_wt() - _lb_oy0;
+            }
         }
+        t_upds_it += lbtime_wt() - _lb_t0;
         ModuleBase::timer::tick("Diago_LOBPCG", "iter_update_space");
 
         //     this->compute_residuals(hx_active, sx_active, e_active, res_active, gen_eig);
@@ -981,6 +1141,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
             // Return best available results so far
             syncmem_complex_2d_op()(psi_in, ld_psi_in, this->x_new_.data<T>(), this->n_dim_, this->n_dim_, this->n_band_);
             copy_real_op(n_band_, this->eig_.data<Real>(), 1, eigenvalue_in, 1);
+            lbtime_emit(iter);
             ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
 #ifdef DEBUG_LOBPCG            
             // print current best eigenvalue and residual for all bands
@@ -993,6 +1154,7 @@ std::cout << "n_conv = " << n_conv << ", n_active_ = " << n_active_ << std::endl
             ModuleBase::timer::tick("Diago_LOBPCG", "diag");
             return false;
         }
+        lbtime_emit(iter);
         ModuleBase::timer::tick("Diago_LOBPCG", "main_iter");
     } // end - main for loop
 
@@ -1184,12 +1346,31 @@ std::cout << "--- INNER Rayleigh-Ritz: heevx ---" << std::endl;
         // basis is S-orthonormal, so pass S = identity. h_red (contiguous, ld len_working)
         // is the rank-0 H input; eigenvectors return in wfc (rank-0 replicated) and are
         // copied back into h_red. The broadcasts below then replicate e_red/h_red.
-        std::vector<T> s_id(static_cast<size_t>(len_working) * len_working, T(0.0));
-        for (int i = 0; i < len_working; ++i) {
-            s_id[static_cast<size_t>(i) * len_working + i] = T(1.0);
+        // S matrix for the generalized solve. Standard LOBPCG orthonormalizes [X,P,W] => S=identity.
+        // Generalized-RR mode (gen_rr_active_): pass the basis Gram Scc = space^H space and skip the
+        // explicit ortho elsewhere (diago_hs_para solves Hcc v = lambda Scc v). A small diagonal ridge
+        // keeps Scc SPD for its internal Cholesky when [X,P,W] is near-rank-deficient (e.g. a converged
+        // W column -> 0).
+        std::vector<T> s_mat(static_cast<size_t>(len_working) * len_working, T(0.0));
+        if (this->gen_rr_active_) {
+            gemm_op('C', 'N', len_working, len_working, dim, one, space, dim, space, dim, zero,
+                    s_mat.data(), len_working);
+            this->allreduce_sum_inplace(s_mat.data(), len_working * len_working);
+            Real maxd = static_cast<Real>(0.0);
+            for (int i = 0; i < len_working; ++i) {
+                maxd = std::max(maxd, std::abs(s_mat[static_cast<size_t>(i) * len_working + i]));
+            }
+            const Real ridge = static_cast<Real>(1.0e-8) * (maxd > static_cast<Real>(0.0) ? maxd : static_cast<Real>(1.0));
+            for (int i = 0; i < len_working; ++i) {
+                s_mat[static_cast<size_t>(i) * len_working + i] += T(ridge);
+            }
+        } else {
+            for (int i = 0; i < len_working; ++i) {
+                s_mat[static_cast<size_t>(i) * len_working + i] = T(1.0);
+            }
         }
         std::vector<T> wfc(static_cast<size_t>(len_working) * len_working);
-        hsolver::diago_hs_para<T>(h_red, s_id.data(), len_working, len_working,
+        hsolver::diago_hs_para<T>(h_red, s_mat.data(), len_working, len_working,
                                   e_red, wfc.data(), this->comm_,
                                   this->para_rr_method_, this->para_rr_bs_);
         if (this->comm_rank_ == 0) {
@@ -1229,6 +1410,41 @@ void DiagoLOBPCG<T, Device>::ortho(const int n, const int m, T *x, const int ldx
     if (this->comm_nproc_ <= 1) {
         // Serial path: ortho by QR.
         this->ortho_local(n, m, x, ldx);
+        ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
+        return;
+    }
+
+    // Cheap CholeskyQR2 path: orthonormalize via LOCAL Cholesky of the (already-replicated) Gram
+    // instead of the root-only heevx polar below. X <- X R1^{-1} R2^{-1}, Ri = chol(Xi^H Xi). Each
+    // pass is a gemm + allreduce (paid anyway) + LOCAL potrf/trtri, eliminating the root-only solve
+    // and the two broadcasts that make the polar an Amdahl bottleneck at np>1. A tiny diagonal ridge
+    // keeps potrf from failing on a near-rank-deficient block (e.g. a converged W column -> 0); the
+    // second pass restores orthonormality.
+    if (this->chol_ortho_) {
+        ct::kernels::lapack_potrf<T, ct_Device> potrf;
+        ct::kernels::lapack_trtri<T, ct_Device> trtri;
+        ct::Tensor gram_c(t_type_, device_type_, {m, m});
+        ct::Tensor xtmp(t_type_, device_type_, {n, m});
+        for (int pass = 0; pass < 2; ++pass) {
+            gram_c.zero();
+            gemm_op('C', 'N', m, m, n, one, x, ldx, x, ldx, zero, gram_c.data<T>(), m);
+            this->allreduce_sum_inplace(gram_c.data<T>(), m * m);
+            Real maxd = static_cast<Real>(0.0);
+            for (int i = 0; i < m; ++i) {
+                maxd = std::max(maxd, std::abs(gram_c.data<T>()[i + i * m]));
+            }
+            const Real rg = static_cast<Real>(1.0e-10) * (maxd > static_cast<Real>(0.0) ? maxd : static_cast<Real>(1.0));
+            for (int i = 0; i < m; ++i) { gram_c.data<T>()[i + i * m] += T(rg); }
+            potrf('U', m, gram_c.data<T>(), m);          // gram_c upper = R (Gram = R^H R)
+            trtri('U', 'N', m, gram_c.data<T>(), m);     // gram_c upper = R^{-1}
+            for (int j = 0; j < m; ++j) {                // zero strict-lower for the full gemm
+                for (int i = j + 1; i < m; ++i) { gram_c.data<T>()[i + j * m] = T(0.0); }
+            }
+            gemm_op('N', 'N', n, m, m, one, x, ldx, gram_c.data<T>(), m, zero, xtmp.data<T>(), n);
+            for (int j = 0; j < m; ++j) {
+                copy_op(n, xtmp.data<T>() + j * n, 1, x + j * ldx, 1);
+            }
+        }
         ModuleBase::timer::tick("Diago_LOBPCG", "ortho");
         return;
     }
@@ -1495,6 +1711,8 @@ std::cout << "--- ortho_against_y: loop ortho x ---" << std::endl;
 #endif
         --iter_cnt;
     }
+    // NB: measured to converge in exactly 1 DGKS pass on PW (LOBPCG_ORTHO_TRACE probe, 2026-06-03),
+    // so the re-orth loop is already minimal -- the ortho cost is the per-call GEMMs, not iteration.
 
     if (iter_cnt <= 0 && this->comm_rank_ == 0) {
         // Too many ortho iterations, exit with warning

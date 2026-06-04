@@ -208,6 +208,17 @@ private:
     //   iteration (more accurate, more expensive; safest for small systems).
     // Override at runtime via env LOBPCG_HARD_LOCK (0 = soft, 1 = hard); both kept.
     bool hard_lock_ = true;
+    // Generalized Rayleigh-Ritz (LOBPCG_GEN_RR): skip the explicit [X,P,W] orthonormalization and
+    // solve Hcc v = lambda Scc v with Scc = space^H space (basis Gram), like dav_subspace. Removes
+    // the #1 residual cost vs dav (~62-70% of the post-Tier-2 gap). gen_rr_active_ = gen_rr_ AND the
+    // distributed RR path is in use (diago_hs_para already solves the generalized problem).
+    bool gen_rr_ = false;
+    bool gen_rr_active_ = false;
+    // Cheap orthonormalization (LOBPCG_CHOL_ORTHO): replace the polar (root-only heevx of the Gram +
+    // 2 broadcasts) in ortho() with CholeskyQR2 (LOCAL Cholesky of the already-replicated Gram, no
+    // root-only solve / broadcast). Targets the #1 residual cost vs dav (ortho + ortho_against_y),
+    // keeping the standard RR so the basis stays well-conditioned (unlike the generalized-RR path).
+    bool chol_ortho_ = false;
 
     // Convergence control
     int n_active_ = 0;   ///< Number of active (non-converged) eigenvectors

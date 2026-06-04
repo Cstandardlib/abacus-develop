@@ -15,6 +15,7 @@
 #include "source_hsolver/kernels/bpcg_kernel_op.h" // normalize_op, precondition_op, apply_eigenvalues_op
 
 #include <vector>
+#include <chrono>  // per-iter timing trace (non-MPI wall-clock fallback)
 
 #ifdef __MPI
 #include <mpi.h>
@@ -167,12 +168,43 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
 
     ModuleBase::timer::tick("Diago_DavSubspace", "first");
 
+    // --- per-iteration timing trace (rank-0, env-gated via DIAG_CONV_TRACE; numerically inert) ---
+    const bool dav_trace = (std::getenv("DIAG_CONV_TRACE") != nullptr) && (this->diag_comm.rank == 0);
+    // Wall-clock helper matching ModuleBase::timer (MPI_Wtime under MPI, else steady_clock).
+    auto dav_wt = []() -> double {
+#ifdef __MPI
+        return MPI_Wtime();
+#else
+        return std::chrono::duration<double>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+    };
+    double t_calgrad_it = 0.0, t_calelem_it = 0.0, t_zhegvx_it = 0.0, t_refresh_it = 0.0;
+    double t_total_t0 = 0.0, _dv_t0 = 0.0;
+    int notconv_iter = 0, rr_dim_iter = 0;
+    // One DAVTIME line per iteration (symmetric with LOBPCG's LBTIME):
+    //   DAVTIME iter nconv nband notconv nbase t_calgrad t_calelem t_zhegvx t_refresh t_total   (seconds)
+    // notconv = hpsi_width (cols cal_grad applied H to this iter); nbase = RR/subspace dim (post cal_elem).
+    auto dav_emit = [&](int it) {
+        if (!dav_trace) { return; }
+        const double t_total_it = dav_wt() - t_total_t0;
+        std::cout << "DAVTIME " << it << " " << (this->n_band - this->notconv) << " " << this->n_band
+                  << " " << notconv_iter << " " << rr_dim_iter
+                  << " " << t_calgrad_it << " " << t_calelem_it << " " << t_zhegvx_it << " "
+                  << t_refresh_it << " " << t_total_it << std::endl;
+    };
+
     int dav_iter = 0;
 
     do
     {
         dav_iter++;
+        // reset per-iter timing; snapshot notconv (hpsi width) BEFORE check_update recomputes it.
+        t_calgrad_it = t_calelem_it = t_zhegvx_it = t_refresh_it = 0.0;
+        t_total_t0 = dav_wt();
+        notconv_iter = this->notconv;
 
+        _dv_t0 = dav_wt();
         this->cal_grad(hpsi_func,
                        spsi_func,
                        this->dim,
@@ -184,7 +216,9 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
                        this->vcc,
                        unconv.data(),
                        &eigenvalue_iter);
+        t_calgrad_it += dav_wt() - _dv_t0;
 
+        _dv_t0 = dav_wt();
         this->cal_elem(this->dim,
                        nbase,
                        this->notconv,
@@ -193,8 +227,12 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
                        this->hpsi,
                        this->hcc,
                        this->scc);
+        t_calelem_it += dav_wt() - _dv_t0;
 
+        _dv_t0 = dav_wt();
         this->diag_zhegvx(nbase, this->n_band, this->hcc, this->scc, this->nbase_x, &eigenvalue_iter, this->vcc);
+        t_zhegvx_it += dav_wt() - _dv_t0;
+        rr_dim_iter = nbase;   // RR / subspace dimension this iter (post cal_elem expansion)
 
         // check convergence and update eigenvalues
         ModuleBase::timer::tick("Diago_DavSubspace", "check_update");
@@ -254,6 +292,7 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
             {
                 // overall convergence or last iteration: exit the iteration
 
+                dav_emit(dav_iter);
                 ModuleBase::timer::tick("Diago_DavSubspace", "last");
                 break;
             }
@@ -266,6 +305,7 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
                 // update this->psi_in_iter according to psi_in
                 syncmem_complex_2d_op()(this->psi_in_iter, this->dim, psi_in, psi_in_dmax, this->dim, this->n_band);
 
+                _dv_t0 = dav_wt();
                 this->refresh(this->dim,
                               this->n_band,
                               nbase,
@@ -276,11 +316,13 @@ int Diago_DavSubspace<T, Device>::diag_once(const HPsiFunc& hpsi_func,
                               this->hcc,
                               this->scc,
                               this->vcc);
+                t_refresh_it += dav_wt() - _dv_t0;
 
                 ModuleBase::timer::tick("Diago_DavSubspace", "last");
             }
         }
 
+        dav_emit(dav_iter);
     } while (true);
 
     ModuleBase::timer::tick("Diago_DavSubspace", "diag_once");

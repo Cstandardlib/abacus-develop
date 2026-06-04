@@ -501,7 +501,15 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         // (27Fe nspin=2). nband+2 is faster on small/normal systems but produces
         // late-SCF events on 27Fe; nband (no buffer) produces events on metals.
         // See docs/analysis/lobpcg_optimization_plan.zh.md Stage A sweep.
-        const int nmax = nband + 10;
+        // Experiment hook (Tier 2/3 buffer study): LOBPCG_NMAX_BUFFER overrides the
+        // buffer (default 10) to swallow the window-edge cluster and shorten the
+        // straggler tail; now affordable because Tier 2 distributes the RR cost.
+        int nmax_buffer = 10;
+        if (const char* env = std::getenv("LOBPCG_NMAX_BUFFER")) {
+            const int v = std::atoi(env);
+            if (v >= 0) { nmax_buffer = v; }
+        }
+        const int nmax = nband + nmax_buffer;
         // print nband and nmax for debugging
         std::cout << "LOBPCG nband (number of eigenpairs sought): " << nband << std::endl;
         std::cout << "LOBPCG nmax (subspace dimension): " << nmax << std::endl;
@@ -512,7 +520,15 @@ void HSolverPW<T, Device>::hamiltSolvePsiK(hamilt::Hamilt<T, Device>* hm,
         // Keep LOBPCG tolerance coupled to SCF-driven diag_thr, but solve eigenpairs tighter.
         // scale 0.4 is the loosest factor that preserves the minimum SCF step count on
         // semiconductors (4GaAs: 0.4 -> 6 steps, >=0.6 -> 7); metals are scale-insensitive.
-        constexpr double lobpcg_tol_scale = 0.4;
+        // Experiment hook (algo-compare study): LOBPCG_TOL_SCALE overrides the scale
+        // (default 0.4). Set 1.0 to make LOBPCG's threshold == diag_thr, matching
+        // dav_subspace/cg for a controlled comparison. Default path unchanged when unset.
+        // See docs/analysis/lobpcg_dav_algo_compare_plan.md A1. Mirrors LOBPCG_NMAX_BUFFER above.
+        double lobpcg_tol_scale = 0.4;
+        if (const char* env = std::getenv("LOBPCG_TOL_SCALE")) {
+            const double v = std::atof(env);
+            if (v > 0.0) { lobpcg_tol_scale = v; }
+        }
         double tolerance = this->diag_thr * lobpcg_tol_scale;
         int max_iter = this->diag_iter_max;
         // print default tolerance and max_iter for LOBPCG
